@@ -1,8 +1,9 @@
 //! `scrawl-helper`, the Swift executable shipped beside `scrawl` (see `helper/main.swift`).
 //!
 //! It owns the Apple frameworks that are Swift-only or absent from the objc2 bindings Scrawl
-//! uses: SpeechAnalyzer transcription, CoreMediaIO/AVFoundation iPhone capture with a live
-//! mirror window, and AVFoundation movie decoding.
+//! uses: Apple's speech recognizers, CoreMediaIO/AVFoundation iPhone capture with a live mirror
+//! window, and AVFoundation movie decoding. Parakeet (`crate::speech`) isn't one of them, but runs
+//! in a child process just the same: `scrawl parakeet FILE`.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -39,13 +40,14 @@ fn run_program<T: for<'de> Deserialize<'de>>(
     args: &[&std::ffi::OsStr],
     timeout: Duration,
 ) -> Result<T> {
+    let name = program.file_name().unwrap_or_default().to_string_lossy();
     let mut child = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .context("Could not start scrawl-helper")?;
+        .with_context(|| format!("Could not start {name}"))?;
     let mut stdout = child.stdout.take().context("No helper stdout")?;
     let mut stderr = child.stderr.take().context("No helper stderr")?;
     let caller = std::thread::current();
@@ -70,7 +72,7 @@ fn run_program<T: for<'de> Deserialize<'de>>(
         if now >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            bail!("scrawl-helper {:?} timed out", args.first());
+            bail!("{name} {:?} timed out", args.first());
         }
         std::thread::park_timeout(deadline - now);
     };
@@ -78,9 +80,13 @@ fn run_program<T: for<'de> Deserialize<'de>>(
     if !status.success() {
         let mut message = String::new();
         let _ = stderr.read_to_string(&mut message);
+        // A crash says nothing: the status is all there is.
+        if message.trim().is_empty() {
+            bail!("{name} ended early ({status})");
+        }
         bail!("{}", message.trim());
     }
-    serde_json::from_slice(&out).context("Invalid scrawl-helper output")
+    serde_json::from_slice(&out).with_context(|| format!("Invalid {name} output"))
 }
 
 fn os(s: &str) -> &std::ffi::OsStr {
@@ -100,7 +106,19 @@ pub struct PhoneDevice {
 /// Screen Recording grant).
 pub fn permissions()
 -> Result<std::collections::BTreeMap<crate::onboarding::Permission, crate::onboarding::Status>> {
-    run(&[os("permissions")], Duration::from_secs(5))
+    let mut statuses: std::collections::BTreeMap<_, _> =
+        run(&[os("permissions")], Duration::from_secs(5))?;
+    // The helper reports Speech Recognition before macOS 26, but Parakeet doesn't need it: only
+    // a language for Apple's recognizer puts it on the checklist.
+    if parakeet_transcribes() {
+        statuses.remove(&crate::onboarding::Permission::SpeechRecognition);
+    }
+    Ok(statuses)
+}
+
+/// Whether the language in Settings › Recording is one for Parakeet, rather than Apple's recognizer.
+pub fn parakeet_transcribes() -> bool {
+    crate::speech::understands(crate::handoff::apple_locale().as_deref())
 }
 
 /// Cabled iPhones and iPads, from the USB registry (no camera permission needed). `id` is the
@@ -125,10 +143,13 @@ struct Transcript {
     error: Option<String>,
 }
 
-/// On-device transcription with measured word timings: SpeechAnalyzer on macOS 26,
-/// SFSpeechRecognizer on macOS 15. Without a speech model the transcript is empty and `missing`
-/// says why.
+/// On-device transcription with measured word timings: Parakeet for English, and for any other
+/// language SpeechAnalyzer on macOS 26 or SFSpeechRecognizer before it. Without a speech model the
+/// transcript is empty and `missing` says why.
 pub fn transcribe(audio: &Path) -> Result<TranscriptData> {
+    if parakeet_transcribes() {
+        return parakeet(audio);
+    }
     let locale = crate::speech_model::locale_args();
     let mut args = vec![os("transcribe"), audio.as_os_str()];
     args.extend(locale.iter().map(|arg| arg.as_os_str()));
@@ -156,6 +177,41 @@ pub fn transcribe(audio: &Path) -> Result<TranscriptData> {
     })
 }
 
+/// Parakeet in a process of its own. A recording longer than the usual limit gets as long as it
+/// lasts: on this path that's several times what it takes even on a busy Mac.
+fn parakeet(audio: &Path) -> Result<TranscriptData> {
+    if crate::speech::installed_models().is_empty() {
+        return Ok(crate::speech::no_model());
+    }
+    // 16 kHz, two bytes a sample.
+    let seconds = std::fs::metadata(audio).map_or(0, |m| m.len()) / 32_000;
+    run_program(
+        &crate::speech::child_exe()?,
+        &[os("parakeet"), audio.as_os_str()],
+        Duration::from_secs(seconds.max(180)),
+    )
+}
+
+/// Runs Parakeet once in the background, so its first compile of Metal shaders doesn't fall on a
+/// capture (`speech::warm`). Trouble is only logged: a capture reports its own.
+pub fn warm_parakeet() {
+    if !parakeet_transcribes() {
+        return;
+    }
+    let started = Instant::now();
+    let warmed = crate::speech::child_exe().and_then(|exe| {
+        run_program::<serde_json::Value>(
+            &exe,
+            &[os("parakeet"), os("--warm")],
+            Duration::from_secs(180),
+        )
+    });
+    crate::capture::scrawl_log(match warmed {
+        Ok(_) => format!("Parakeet warmed up in {} ms", started.elapsed().as_millis()),
+        Err(error) => format!("Parakeet didn't warm up: {error:#}"),
+    });
+}
+
 /// One line of `scrawl-helper speech-model [--install]`.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct SpeechModelLine {
@@ -172,13 +228,28 @@ pub struct SpeechModelLine {
     pub error: Option<String>,
 }
 
-/// Runs `scrawl-helper speech-model --install` for the chosen language, handing each line to
-/// `line` as it comes. The download can take minutes; the helper exits when it's done or has
-/// failed, and is killed as soon as `stop` says a newer check superseded it.
+/// Gets the chosen language's model, handing each status line to `line` as it comes. For English
+/// that's Parakeet's download here, whose lines also carry the languages Settings offers. For any
+/// other it's `scrawl-helper speech-model --install`: the download can take minutes; the helper
+/// exits when it's done or has failed, and is killed as soon as `stop` says a newer check
+/// superseded it.
 pub fn install_speech_model(
     stop: &dyn Fn() -> bool,
-    line: impl FnMut(SpeechModelLine),
+    mut line: impl FnMut(SpeechModelLine),
 ) -> Result<()> {
+    if parakeet_transcribes() {
+        let locales = run::<SpeechModelLine>(
+            &[os("speech-model"), os("--locales")],
+            Duration::from_secs(5),
+        )
+        .inspect_err(|error| crate::capture::scrawl_log(format!("speech locales: {error:#}")))
+        .ok()
+        .and_then(|listed| listed.locales);
+        return crate::speech::install(stop, |mut report| {
+            report.locales = locales.clone();
+            line(report);
+        });
+    }
     let mut command = Command::new(path()?);
     command.args(["speech-model", "--install"]);
     command.args(crate::speech_model::locale_args());
@@ -403,6 +474,19 @@ pub fn qr(text: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_child_that_crashes_says_how_it_ended() {
+        let error = run_program::<serde_json::Value>(
+            Path::new("/bin/sh"),
+            &[os("-c"), os("kill -SEGV $$")],
+            Duration::from_secs(5),
+        )
+        .unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("sh ended early"), "{error}");
+        assert!(error.contains("signal"), "{error}");
+    }
 
     #[test]
     fn a_superseded_install_stops_without_waiting_for_the_helper() {

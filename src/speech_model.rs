@@ -1,9 +1,9 @@
-//! Apple's on-device speech model. A fresh Mac doesn't have it, and each app has to reserve it
-//! for itself (`AssetInventory`, attributed to `scrawl-helper`), so Scrawl checks and installs
-//! it in the background at launch (`scrawl-helper speech-model --install`) instead of during the
-//! first capture. Onboarding and Settings show how that's going (`view`). On macOS 15 there's
-//! nothing to download: the check is for the Speech Recognition permission (`NeedsPermission`,
-//! asked for in onboarding) and Dictation's on-device model.
+//! The on-device speech model. A fresh Mac doesn't have one, so Scrawl checks and installs it in
+//! the background at launch instead of during the first capture, and onboarding and Settings show
+//! how that's going (`view`). For English that's Parakeet (`crate::speech`), 731 MB. Another
+//! language keeps Apple's model: `AssetInventory` on macOS 26, where each app has to reserve it for
+//! itself (`scrawl-helper speech-model --install`); before that nothing to download, and the check
+//! is for the Speech Recognition permission (`NeedsPermission`) and Dictation's on-device model.
 //!
 //! A capture that finishes without a model says so in its summary (`TranscriptData::missing`,
 //! from `missing`). When the reason can pass (still downloading, a failed download), the bundle
@@ -59,8 +59,8 @@ pub enum State {
     Ready,
     /// No Apple speech model for this Mac and language.
     Unavailable,
-    /// macOS 15: Speech Recognition isn't allowed yet (onboarding asks for it). Checked again
-    /// once it is (`note_grants`).
+    /// Before macOS 26, with a language for Apple's recognizer: Speech Recognition isn't allowed
+    /// yet (onboarding asks for it). Checked again once it is (`note_grants`).
     NeedsPermission,
     Failed,
 }
@@ -70,11 +70,11 @@ pub enum State {
 #[serde(rename_all = "camelCase")]
 pub struct Status {
     pub state: State,
-    /// `SpeechTranscriber`, `DictationTranscriber` on Macs without SpeechTranscriber, or
-    /// `SFSpeechRecognizer` on macOS 15.
+    /// `Parakeet`, or for another language `SpeechTranscriber`, `DictationTranscriber` on Macs
+    /// without SpeechTranscriber, or `SFSpeechRecognizer` before macOS 26.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub engine: Option<String>,
-    /// `en_US`; the helper window shows its name.
+    /// `en` (Parakeet) or `en_US`; the helper window shows its name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub locale: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -247,6 +247,8 @@ fn work(generation: u64) {
         match status.state {
             State::Ready => {
                 if !lock().stale(generation) {
+                    #[cfg(target_os = "macos")]
+                    crate::helper::warm_parakeet();
                     transcribe_pending(&crate::handoff::default_captures_dir());
                 }
                 return;
@@ -266,7 +268,7 @@ fn work(generation: u64) {
     }
 }
 
-/// Speech Recognition was just allowed (macOS 15): check the model again now.
+/// Speech Recognition was just allowed: check Apple's model again now.
 pub fn note_grants(grants: &crate::onboarding::Grants) {
     if current().state == State::NeedsPermission
         && grants.granted(crate::onboarding::Permission::SpeechRecognition)
@@ -278,7 +280,8 @@ pub fn note_grants(grants: &crate::onboarding::Grants) {
 /// The plain sentence for a capture without a transcript, from the helper's `missing`.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn missing(why: &str, locale: &str, error: Option<&str>) -> MissingTranscript {
-    let model = if cfg!(target_os = "windows") {
+    // Parakeet reports a bare language; Apple's engines a whole locale (`en_US`).
+    let model = if locale == "en" {
         format!("The Parakeet speech model ({locale})")
     } else {
         format!("Apple's speech model ({locale})")
@@ -364,7 +367,7 @@ fn transcribe_one(dir: &Path) {
     }
 }
 
-/// Transcribes a bundle's `audio.wav` with Apple Speech and rewrites its transcript, each
+/// Transcribes a bundle's `audio.wav` on device and rewrites its transcript, each
 /// keyframe's words, `scrawl.json` and `summary.md`. Returns `false` (and keeps the marker)
 /// while there's still no model.
 pub fn transcribe_again(dir: &Path) -> Result<bool> {
@@ -505,6 +508,57 @@ mod tests {
         for automatic_or_bad in ["", "auto", "AUTO", "zh-TW --install", "../x", "-zh", "中文"] {
             assert_eq!(locale_id(automatic_or_bad), None, "{automatic_or_bad:?}");
         }
+    }
+
+    #[test]
+    fn parakeets_install_lines_drive_the_states_onboarding_and_settings_show() {
+        let parakeet = |status: &str, progress: Option<f64>, error: Option<&str>| {
+            crate::helper::SpeechModelLine {
+                status: status.into(),
+                engine: Some("Parakeet".into()),
+                locale: Some("en".into()),
+                progress,
+                error: error.map(str::to_owned),
+                ..Default::default()
+            }
+        };
+        let mut w = Worker::default();
+        let g = w.request(false, true).unwrap();
+        assert!(w.apply(g, &parakeet("downloading", Some(0.42), None)));
+        assert_eq!(w.status.state, State::Downloading);
+        assert_eq!(w.status.progress, 0.42);
+        assert!(w.apply(g, &parakeet("failed", None, Some("the download failed"))));
+        assert_eq!(w.status.state, State::Failed);
+        assert_eq!(w.status.error.as_deref(), Some("the download failed"));
+        assert!(w.apply(g, &parakeet("installed", Some(1.0), None)));
+        assert_eq!(w.status.state, State::Ready);
+        assert_eq!(w.status.engine.as_deref(), Some("Parakeet"));
+        assert_eq!(w.status.locale.as_deref(), Some("en"));
+        assert_eq!(w.status.error, None);
+    }
+
+    #[test]
+    fn a_capture_without_parakeet_names_it_and_waits_for_the_download() {
+        let downloading = missing("downloading", "en", None);
+        assert!(downloading.retry);
+        assert!(
+            downloading
+                .reason
+                .starts_with("The Parakeet speech model (en) was still downloading.")
+        );
+        let failed = missing("failed", "en", Some("no network"));
+        assert!(failed.retry);
+        assert!(
+            failed
+                .reason
+                .starts_with("The Parakeet speech model (en) couldn't")
+        );
+        assert!(failed.reason.contains("(no network)"));
+        assert!(
+            missing("downloading", "da_DK", None)
+                .reason
+                .starts_with("Apple's speech model (da_DK)")
+        );
     }
 
     #[test]

@@ -1,13 +1,18 @@
-//! On-device transcription on Windows, with measured word timings: Parakeet through
+//! On-device transcription on Windows and macOS, with measured word timings: Parakeet through
 //! `transcribe.cpp`, the engine Hex uses. It loads a model Hex has already installed
-//! (`%APPDATA%\hex\models`, else the older `%APPDATA%\voice-control\models`), else Scrawl's own
-//! copy of Hex's Parakeet Unified English (`%LOCALAPPDATA%\Scrawl\models`), which `install` downloads once in the background and checks
-//! against its SHA-256. Like the Hex client, it transcribes each speech island on its own; unlike
-//! it, every word keeps the time the model heard it (`estimated: false`), so spoken cues ("look
-//! here") can cut keyframes.
+//! (`%APPDATA%\hex\models`, else the older `%APPDATA%\voice-control\models`; on a Mac the same
+//! folders under `~/Library/Application Support`), else Scrawl's own copy of Hex's Parakeet Unified
+//! English (`%LOCALAPPDATA%\Scrawl\models`, `~/Library/Application Support/scrawl/models`), which
+//! `install` downloads once in the background and checks against its SHA-256. Like the Hex client,
+//! it transcribes each speech island on its own; unlike it, every word keeps the time the model
+//! heard it (`estimated: false`), so spoken cues ("look here") can cut keyframes.
+//!
+//! Windows runs it in process. A Mac runs it in a child, `scrawl parakeet FILE`
+//! (`helper::transcribe`), as it does `scrawl-helper`: a crash can't reach the app, and the
+//! model's memory goes when the child exits.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use transcribe_cpp::{Model, RunOptions, TimestampKind};
@@ -40,7 +45,42 @@ pub fn own_models_dir() -> PathBuf {
     std::env::var_os("SCRAWL_MODELS_DIR")
         .map(PathBuf::from)
         .filter(|dir| !dir.as_os_str().is_empty())
-        .unwrap_or_else(|| crate::win::local_dir().join("models"))
+        .unwrap_or_else(default_models_dir)
+}
+
+#[cfg(target_os = "windows")]
+fn default_models_dir() -> PathBuf {
+    crate::win::local_dir().join("models")
+}
+
+#[cfg(not(target_os = "windows"))]
+fn default_models_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("Library/Application Support/scrawl/models")
+}
+
+/// What runs `scrawl parakeet`: this program. A test binary sits in `target/*/deps`, under `scrawl`.
+#[cfg(target_os = "macos")]
+pub fn child_exe() -> Result<PathBuf> {
+    let exe = std::env::current_exe().context("Could not locate scrawl")?;
+    Ok(if cfg!(test) {
+        exe.with_file_name("../scrawl")
+    } else {
+        exe
+    })
+}
+
+/// Whether Parakeet transcribes this `appleLocale`: Automatic (`None`) and any English. The model
+/// knows no other language, so those stay with Apple's recognizer through `scrawl-helper`, which
+/// needs the Speech Recognition permission and Dictation.
+#[cfg(target_os = "macos")]
+pub fn understands(locale: Option<&str>) -> bool {
+    locale.is_none_or(|id| {
+        id.split(['-', '_'])
+            .next()
+            .is_some_and(|language| language.eq_ignore_ascii_case("en"))
+    })
 }
 
 fn receipt_path(model: &Path) -> PathBuf {
@@ -107,24 +147,28 @@ fn model_name(path: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// The background download hasn't finished (or failed): the bundle is transcribed again once it
+/// has. Asks this process's `speech_model` worker, so a Mac calls it before starting the child.
+pub fn no_model() -> TranscriptData {
+    let status = crate::speech_model::current();
+    let why = match status.state {
+        crate::speech_model::State::Failed => "failed",
+        _ => "downloading",
+    };
+    TranscriptData {
+        source: "offline".into(),
+        missing: Some(crate::speech_model::missing(
+            why,
+            "en",
+            status.error.as_deref(),
+        )),
+        ..Default::default()
+    }
+}
+
 pub fn transcribe(audio: &Path) -> Result<TranscriptData> {
     let Some(path) = installed_models().into_iter().next() else {
-        // The background download hasn't finished (or failed): the bundle is transcribed again
-        // once it has.
-        let status = crate::speech_model::current();
-        let why = match status.state {
-            crate::speech_model::State::Failed => "failed",
-            _ => "downloading",
-        };
-        return Ok(TranscriptData {
-            source: "offline".into(),
-            missing: Some(crate::speech_model::missing(
-                why,
-                "en",
-                status.error.as_deref(),
-            )),
-            ..Default::default()
-        });
+        return Ok(no_model());
     };
     let wav =
         std::fs::read(audio).with_context(|| format!("Could not read {}", audio.display()))?;
@@ -145,9 +189,12 @@ pub fn transcribe(audio: &Path) -> Result<TranscriptData> {
         return Ok(transcript);
     }
 
+    let started = Instant::now();
     init_backends()?;
     let model = Model::load(&path).with_context(|| format!("Could not load {}", path.display()))?;
+    let load_ms = started.elapsed().as_millis();
     let mut session = model.session()?;
+    let clip_count = clips.len();
     let options = RunOptions {
         timestamps: TimestampKind::Word,
         language: Some("en".into()),
@@ -208,7 +255,29 @@ pub fn transcribe(audio: &Path) -> Result<TranscriptData> {
         texts.push(text);
     }
     transcript.text = texts.join(" ");
+    crate::capture::scrawl_log(format!(
+        "Parakeet: {duration_ms} ms of audio, {clip_count} clip(s), model {load_ms} ms, {} ms in all",
+        started.elapsed().as_millis()
+    ));
     Ok(transcript)
+}
+
+/// Runs the model once on two seconds of tone (`scrawl parakeet --warm`). The first run under an
+/// app's bundle id has Metal compile ggml's shaders, about 20 s on an M1, and only then keeps them
+/// on disk, so Scrawl does it in the background rather than leaving it to the first capture. After
+/// that it costs what a short clip does, and leaves the model in the page cache.
+#[cfg(target_os = "macos")]
+pub fn warm() -> Result<()> {
+    let Some(path) = installed_models().into_iter().next() else {
+        return Ok(());
+    };
+    init_backends()?;
+    let model = Model::load(&path).with_context(|| format!("Could not load {}", path.display()))?;
+    let pcm: Vec<f32> = (0..2 * 1_000 * KHZ)
+        .map(|i| (i as f32 * 440.0 * std::f32::consts::TAU / 16_000.0).sin() * 0.1)
+        .collect();
+    model.session()?.run(&pcm, &RunOptions::default())?;
+    Ok(())
 }
 
 /// Loads ggml's CPU backend DLL for this CPU (beside `transcribe.dll`), once per process: the
@@ -225,8 +294,20 @@ fn init_backends() -> Result<()> {
 
 /// Makes sure a model is on disk: `installed` when Hex's or Scrawl's own is there, else downloads
 /// `PARAKEET` into `own_models_dir()`, reporting progress, and keeps it only if its SHA-256
-/// matches. The same lines as macOS's `scrawl-helper speech-model --install`.
-pub fn install(mut line: impl FnMut(SpeechModelLine)) -> Result<()> {
+/// matches. The same lines as `scrawl-helper speech-model --install`. A download stops as soon as
+/// `stop` says a newer check superseded it, and the next try resumes it.
+pub fn install(stop: &dyn Fn() -> bool, line: impl FnMut(SpeechModelLine)) -> Result<()> {
+    let installed = !installed_models().is_empty();
+    install_into(&PARAKEET, &own_models_dir(), installed, stop, line)
+}
+
+fn install_into(
+    artifact: &Artifact,
+    dir: &Path,
+    installed: bool,
+    stop: &dyn Fn() -> bool,
+    mut line: impl FnMut(SpeechModelLine),
+) -> Result<()> {
     let report = |status: &str, progress: Option<f64>, error: Option<String>| SpeechModelLine {
         status: status.into(),
         engine: Some("Parakeet".into()),
@@ -235,9 +316,9 @@ pub fn install(mut line: impl FnMut(SpeechModelLine)) -> Result<()> {
         progress,
         error,
     };
-    if installed_models().is_empty() {
+    if !installed {
         let mut progress = |done: f64| line(report("downloading", Some(done), None));
-        if let Err(error) = download(&PARAKEET, &own_models_dir(), &mut progress) {
+        if let Err(error) = download(artifact, dir, stop, &mut progress) {
             line(report("failed", None, Some(format!("{error:#}"))));
             return Ok(());
         }
@@ -249,13 +330,18 @@ pub fn install(mut line: impl FnMut(SpeechModelLine)) -> Result<()> {
 /// Downloads `artifact` into `dir` (resuming a `.partial` file), checks it, and writes the
 /// `.verified.json` receipt that `installed_models` looks for. A file that fails the check is
 /// deleted, so the next try starts over.
-pub fn download(artifact: &Artifact, dir: &Path, progress: &mut dyn FnMut(f64)) -> Result<PathBuf> {
+pub fn download(
+    artifact: &Artifact,
+    dir: &Path,
+    stop: &dyn Fn() -> bool,
+    progress: &mut dyn FnMut(f64),
+) -> Result<PathBuf> {
     std::fs::create_dir_all(dir).with_context(|| format!("Could not create {}", dir.display()))?;
     let model = dir.join(artifact.filename);
     if !model.is_file() {
         let partial = dir.join(format!("{}.partial", artifact.filename));
         if std::fs::metadata(&partial).map_or(0, |m| m.len()) < artifact.bytes {
-            fetch(artifact.url, &partial, artifact.bytes, progress)?;
+            fetch(artifact.url, &partial, artifact.bytes, stop, progress)?;
         }
         std::fs::rename(&partial, &model)?;
     }
@@ -292,14 +378,33 @@ fn verify(path: &Path, artifact: &Artifact) -> Result<()> {
 }
 
 /// Windows' own `curl.exe` (in System32 since Windows 10 1803), without a console window.
-fn fetch(url: &str, partial: &Path, total: u64, progress: &mut dyn FnMut(f64)) -> Result<()> {
-    use std::io::Read;
+#[cfg(target_os = "windows")]
+fn curl() -> std::process::Command {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let curl = std::env::var_os("SystemRoot")
         .map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from)
         .join(r"System32\curl.exe");
-    let mut child = std::process::Command::new(&curl)
+    let mut command = std::process::Command::new(curl);
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
+/// The Mac's own curl, whatever is first on PATH.
+#[cfg(not(target_os = "windows"))]
+fn curl() -> std::process::Command {
+    std::process::Command::new("/usr/bin/curl")
+}
+
+fn fetch(
+    url: &str,
+    partial: &Path,
+    total: u64,
+    stop: &dyn Fn() -> bool,
+    progress: &mut dyn FnMut(f64),
+) -> Result<()> {
+    use std::io::Read;
+    let mut child = curl()
         .args([
             "--fail",
             "--location",
@@ -316,10 +421,14 @@ fn fetch(url: &str, partial: &Path, total: u64, progress: &mut dyn FnMut(f64)) -
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
-        .creation_flags(CREATE_NO_WINDOW)
         .spawn()
-        .with_context(|| format!("Could not run {}", curl.display()))?;
+        .context("Could not run curl")?;
     loop {
+        if stop() {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!("the download was stopped");
+        }
         if let Some(status) = child.try_wait()? {
             if status.success() {
                 progress(1.0);
@@ -360,7 +469,7 @@ mod tests {
     fn a_finished_download_that_matches_gets_a_receipt_and_counts_as_installed() {
         let dir = temp_dir("good");
         std::fs::write(dir.join("fixture.gguf.partial"), b"hello").unwrap();
-        let model = download(&HELLO, &dir, &mut |_| {}).unwrap();
+        let model = download(&HELLO, &dir, &|| false, &mut |_| {}).unwrap();
         assert_eq!(model, dir.join("fixture.gguf"));
         assert!(receipt_path(&model).is_file());
         assert_eq!(verified_in(&dir), vec![model]);
@@ -370,10 +479,140 @@ mod tests {
     fn a_download_that_fails_its_checksum_is_deleted_and_not_installed() {
         let dir = temp_dir("bad");
         std::fs::write(dir.join("fixture.gguf.partial"), b"hellp").unwrap();
-        let error = download(&HELLO, &dir, &mut |_| {}).unwrap_err();
+        let error = download(&HELLO, &dir, &|| false, &mut |_| {}).unwrap_err();
         assert!(format!("{error:#}").contains("checksum"));
         assert!(!dir.join("fixture.gguf").exists());
         assert!(verified_in(&dir).is_empty());
+    }
+
+    /// Serves `body` from 127.0.0.1, honouring curl's `Range` when it resumes. The first answer can
+    /// stop after `first_stops_at` bytes and hang, as a connection does when it dies.
+    #[cfg(target_os = "macos")]
+    fn serve(body: &'static [u8], first_stops_at: Option<usize>) -> &'static str {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/fixture.gguf", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let mut stops_at = first_stops_at;
+            for mut stream in listener.incoming().flatten() {
+                let mut request = Vec::new();
+                let mut byte = [0];
+                while !request.ends_with(b"\r\n\r\n") && stream.read_exact(&mut byte).is_ok() {
+                    request.push(byte[0]);
+                }
+                let request = String::from_utf8_lossy(&request).to_lowercase();
+                let from: usize = request
+                    .split("range: bytes=")
+                    .nth(1)
+                    .and_then(|rest| rest.split('-').next()?.parse().ok())
+                    .unwrap_or(0);
+                let head = if from > 0 {
+                    format!(
+                        "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {from}-{}/{}\r\n",
+                        body.len() - 1,
+                        body.len()
+                    )
+                } else {
+                    "HTTP/1.1 200 OK\r\n".to_owned()
+                };
+                let length = body.len() - from;
+                let _ = write!(stream, "{head}Content-Length: {length}\r\n\r\n");
+                let _ = stream.write_all(&body[from..stops_at.unwrap_or(body.len())]);
+                let _ = stream.flush();
+                if stops_at.take().is_some() {
+                    let _ = stream.read(&mut byte);
+                }
+            }
+        });
+        Box::leak(url.into_boxed_str())
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_fresh_install_downloads_the_model_and_says_how_its_going() {
+        let dir = temp_dir("fresh");
+        let artifact = Artifact {
+            url: serve(b"hello", None),
+            ..HELLO
+        };
+        let mut lines = Vec::new();
+        install_into(&artifact, &dir, false, &|| false, |line| lines.push(line)).unwrap();
+        let (last, earlier) = lines.split_last().unwrap();
+        assert_eq!(last.status, "installed");
+        assert_eq!(last.progress, Some(1.0));
+        assert_eq!(last.engine.as_deref(), Some("Parakeet"));
+        assert_eq!(last.locale.as_deref(), Some("en"));
+        assert!(!earlier.is_empty() && earlier.iter().all(|l| l.status == "downloading"));
+        assert_eq!(verified_in(&dir), vec![dir.join("fixture.gguf")]);
+        assert_eq!(std::fs::read(dir.join("fixture.gguf")).unwrap(), b"hello");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_download_that_cannot_start_reports_failed_and_leaves_no_model() {
+        let dir = temp_dir("unreachable");
+        let mut lines = Vec::new();
+        install_into(&HELLO, &dir, false, &|| false, |line| lines.push(line)).unwrap();
+        let last = lines.last().unwrap();
+        assert_eq!(last.status, "failed");
+        assert!(last.error.as_deref().unwrap().contains("download failed"));
+        assert!(!dir.join("fixture.gguf").exists());
+        assert!(verified_in(&dir).is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_stopped_download_is_killed_and_the_next_try_resumes_it() {
+        use sha2::{Digest, Sha256};
+        let dir = temp_dir("resume");
+        // Bigger than curl's write buffer, which is all that reaches the disk before it's killed.
+        let body: &'static [u8] = Vec::leak(vec![7; 4 << 20]);
+        let artifact = Artifact {
+            url: serve(body, Some(2 << 20)),
+            bytes: body.len() as u64,
+            sha256: String::leak(format!("{:x}", Sha256::digest(body))),
+            ..HELLO
+        };
+        let partial = dir.join("fixture.gguf.partial");
+        let started = Instant::now();
+        let stop = || std::fs::metadata(&partial).map_or(0, |m| m.len()) > 0;
+        let error = download(&artifact, &dir, &stop, &mut |_| {}).unwrap_err();
+        assert!(format!("{error:#}").contains("stopped"));
+        assert!(started.elapsed() < Duration::from_secs(10));
+        let kept = std::fs::metadata(&partial).unwrap().len();
+        assert!(kept > 0 && kept < artifact.bytes, "{kept}");
+        assert!(verified_in(&dir).is_empty());
+
+        let model = download(&artifact, &dir, &|| false, &mut |_| {}).unwrap();
+        assert_eq!(std::fs::read(model).unwrap(), body);
+        assert!(!partial.exists());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_model_that_is_there_is_never_fetched() {
+        let dir = temp_dir("present");
+        let mut lines = Vec::new();
+        install_into(&HELLO, &dir, true, &|| false, |line| lines.push(line)).unwrap();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].status, "installed");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn automatic_and_english_are_parakeets_and_nothing_else_is() {
+        for id in [
+            None,
+            Some("en"),
+            Some("en-GB"),
+            Some("en_US"),
+            Some("EN-au"),
+        ] {
+            assert!(understands(id), "{id:?}");
+        }
+        for id in ["da", "da-DK", "de-DE", "zh-TW", "eng", "ena-XX"] {
+            assert!(!understands(Some(id)), "{id}");
+        }
     }
 
     /// Downloads the real model (731 MB), loads it and runs it on two seconds of sound. CI's
@@ -386,10 +625,11 @@ mod tests {
         let dir = kept.clone().unwrap_or_else(|| temp_dir("parakeet"));
         let fresh = !dir.join(PARAKEET.filename).is_file();
         let mut last = 0.0;
-        let model = download(&PARAKEET, &dir, &mut |done| last = done).unwrap();
+        let model = download(&PARAKEET, &dir, &|| false, &mut |done| last = done).unwrap();
         if fresh {
             assert_eq!(last, 1.0);
         }
+        #[cfg(target_arch = "x86_64")]
         if std::env::var_os("SCRAWL_TEST_NO_AVX512").is_some() {
             // Under SDE: proves the emulated CPU is the one without AVX-512.
             assert!(!std::arch::is_x86_feature_detected!("avx512f"));

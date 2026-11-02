@@ -1,8 +1,9 @@
-//! Transcription: Apple's SpeechAnalyzer through `scrawl-helper` (measured word and segment
-//! timings), Hex when `"transcriber": "hex"` is set and Hex is connected (`crate::hex`; word
-//! times estimated), or a program of the user's when `"transcriber": "command"`
-//! (`crate::command_transcriber`). Any Hex or command trouble falls back to Apple for that
-//! recording.
+//! Transcription: the on-device engine, `Engine::Apple` in the config, which on a Mac is Parakeet
+//! for English and Apple's recognizer through `scrawl-helper` for any other language (both with
+//! measured word and segment timings), Hex when `"transcriber": "hex"` is set and Hex is connected
+//! (`crate::hex`; word times estimated), or a program of the user's when `"transcriber":
+//! "command"` (`crate::command_transcriber`). Any Hex or command trouble falls back to the
+//! on-device engine for that recording.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -57,10 +58,10 @@ impl Engine {
     }
 }
 
-/// The on-device engine's name in menus: Apple's SpeechAnalyzer on macOS; on Windows, Parakeet
-/// through `transcribe.cpp` (`crate::win::speech`). Both are `Engine::Apple` in the config.
+/// The on-device engine's name in menus: Parakeet through `transcribe.cpp`, `win/speech.rs` on
+/// both systems. It's `Engine::Apple` in the config.
 #[cfg(target_os = "macos")]
-pub const LOCAL_ENGINE_TITLE: &str = "Apple Speech";
+pub const LOCAL_ENGINE_TITLE: &str = "Parakeet (on this Mac)";
 #[cfg(not(target_os = "macos"))]
 pub const LOCAL_ENGINE_TITLE: &str = "Parakeet (on this PC)";
 
@@ -178,7 +179,7 @@ fn finish_live(
     }
 }
 
-/// The preferred engine when it isn't Apple, with Apple as the answer to anything it can't do.
+/// The preferred engine when it isn't the on-device one, which answers anything it can't do.
 /// `other` returns `Ok(None)` when that engine isn't there at all (Hex not connected or without a
 /// ready model, no usable `transcribeCommand`).
 fn run(
@@ -243,13 +244,23 @@ fn try_hex(audio: &RecordedAudio) -> Result<Option<TranscriptData>> {
     crate::hex::transcribe_audio(&client, &model, &crate::handoff::hex_language(), audio).map(Some)
 }
 
+/// Who an on-device failure is reported against: a language Parakeet doesn't know went to Apple.
+fn local_engine() -> &'static str {
+    #[cfg(target_os = "macos")]
+    if !crate::helper::parakeet_transcribes() {
+        return "Apple's recognizer";
+    }
+    LOCAL_ENGINE_TITLE
+}
+
 fn apple(wav: &Path) -> TranscriptData {
     let transcript = crate::helper::transcribe(wav).unwrap_or_else(|error| {
-        crate::capture::scrawl_log(format!("{LOCAL_ENGINE_TITLE} failed: {error:#}"));
+        let engine = local_engine();
+        crate::capture::scrawl_log(format!("{engine} failed: {error:#}"));
         TranscriptData {
             source: "offline".into(),
             missing: Some(crate::model::MissingTranscript {
-                reason: format!("{LOCAL_ENGINE_TITLE} failed ({error:#})."),
+                reason: format!("{engine} failed ({error:#})."),
                 retry: false,
             }),
             ..Default::default()

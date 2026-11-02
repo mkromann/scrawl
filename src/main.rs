@@ -48,6 +48,9 @@ mod shortcut;
 mod sketch;
 #[cfg(target_os = "macos")]
 mod sparkle;
+#[cfg(target_os = "macos")]
+#[path = "win/speech.rs"]
+mod speech;
 mod speech_model;
 mod transcribe;
 mod ui;
@@ -288,9 +291,20 @@ enum Command {
         #[arg(long)]
         watch: Option<u64>,
     },
-    /// Transcribe a bundle's audio again with Apple Speech, in place: its transcript, each
-    /// keyframe's words, `scrawl.json` and `summary.md`. Scrawl does this by itself for captures
-    /// made while the speech model was still downloading.
+    /// Transcribe a 16 kHz mono WAV with Parakeet and print the transcript as JSON. Scrawl runs
+    /// this as a child process (`helper::transcribe`).
+    #[cfg(target_os = "macos")]
+    #[command(hide = true)]
+    Parakeet {
+        #[arg(required_unless_present = "warm")]
+        audio: Option<PathBuf>,
+        /// Run the model once, to get its Metal shaders compiled and on disk.
+        #[arg(long, conflicts_with = "audio")]
+        warm: bool,
+    },
+    /// Transcribe a bundle's audio again with the on-device transcriber, in place: its transcript,
+    /// each keyframe's words, `scrawl.json` and `summary.md`. Scrawl does this by itself for
+    /// captures made while the speech model was still downloading.
     Retranscribe {
         /// Path to `.scrawl` bundle directory or `latest`.
         bundle: PathBuf,
@@ -1714,6 +1728,15 @@ fn main() -> Result<()> {
                 handoff::copy_bundle_to_clipboard(&dir)?;
             }
             print!("{summary}");
+            Ok(())
+        }
+        #[cfg(target_os = "macos")]
+        Command::Parakeet { audio, .. } => {
+            let transcript = audio.as_deref().map(speech::transcribe).transpose()?;
+            if transcript.is_none() {
+                speech::warm()?;
+            }
+            println!("{}", serde_json::to_string(&transcript)?);
             Ok(())
         }
         Command::Retranscribe { bundle } => {

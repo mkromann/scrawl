@@ -5,10 +5,11 @@
 //!
 //! Screen Recording, Microphone and Accessibility are required and asked for together on the
 //! permissions screen, Screen Recording first. Camera (the cabled iPhone) is asked for the first
-//! time it's used, in the same window with just that row (`Flow::fix`). On macOS 15, where
-//! transcripts come from SFSpeechRecognizer, Speech Recognition is an optional fourth row, so
-//! its prompt comes up here rather than after the first capture. Until the required ones
-//! are on, ⌥⇧S starts nothing: it brings this window forward once the keys are up (`Gate`).
+//! time it's used, in the same window with just that row (`Flow::fix`). Parakeet needs no
+//! permission, but a language it doesn't know goes to SFSpeechRecognizer before macOS 26, and
+//! then Speech Recognition is an optional fourth row, so its prompt comes up here rather than
+//! after the first capture. Until the required ones are on, ⌥⇧S starts nothing: it brings this
+//! window forward once the keys are up (`Gate`).
 //!
 //! A Screen Recording grant may only reach a running copy of Scrawl after it relaunches, and
 //! macOS offers "Quit & Reopen" the moment it's granted. Whatever the user picks there, nobody
@@ -32,8 +33,8 @@ pub enum Permission {
     InputMonitoring,
     Accessibility,
     Camera,
-    /// SFSpeechRecognizer's own permission, for transcripts on macOS 15. Optional, and only on
-    /// the screen when the helper reports it (SpeechAnalyzer on macOS 26 needs none).
+    /// SFSpeechRecognizer's own permission, for transcripts in a language Parakeet doesn't know
+    /// before macOS 26. Optional, and only on the screen when `helper::permissions` reports it.
     SpeechRecognition,
 }
 
@@ -59,8 +60,8 @@ impl Permission {
         Self::REQUIRED.contains(&self)
     }
 
-    /// Whether this Mac asks for it at all: Speech Recognition only when the helper reports it
-    /// (macOS before 26).
+    /// Whether this Mac asks for it at all: Speech Recognition only when `helper::permissions`
+    /// reports it (before macOS 26, with a language for Apple's recognizer).
     pub fn asked(self, grants: Option<&Grants>) -> bool {
         self != Permission::SpeechRecognition
             || grants.is_some_and(|g| g.statuses.contains_key(&self))

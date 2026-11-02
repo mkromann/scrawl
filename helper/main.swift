@@ -6,6 +6,7 @@
 //   scrawl-helper transcribe FILE [--locale ID]          SpeechAnalyzer transcript with word timings
 //   scrawl-helper transcribe-stream [--locale ID]        the same while recording: PCM on stdin, JSON lines (LiveTranscribe.swift)
 //   scrawl-helper speech-model [--install] [--locale ID] the speech model's status; install it (JSON lines)
+//   scrawl-helper speech-model --locales                 only the locales the recognizer knows
 //   scrawl-helper frames MOVIE --out-dir DIR (--every MS | --at MS,MS…) [--max-edge PX]
 //   scrawl-helper audio MOVIE OUT.wav                   16 kHz mono PCM of every audio track, mixed
 //   scrawl-helper probe MOVIE                           duration and video size
@@ -122,6 +123,9 @@ case "transcribe":
 case "transcribe-stream":
   runAsync { try await LiveTranscriber.run(preferred: option("--locale", in: arguments)) }
 case "speech-model":
+  if arguments.contains("--locales") {
+    runAsync { emit(["status": "listed", "locales": await SpeechModel.supportedLocales()]) }
+  }
   let install = arguments.contains("--install")
   runAsync { await SpeechModel.run(install: install, preferred: option("--locale", in: arguments)) }
 case "frames":

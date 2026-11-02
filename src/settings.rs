@@ -1680,7 +1680,7 @@ impl Session {
     pub fn sync(&mut self, host: &dyn Host) {
         let mut view = serde_json::to_value(self.panel.view(host)).unwrap_or_default();
         view["type"] = "state".into();
-        // Switched from Hex to Apple Speech: get its model now, not at the first capture.
+        // Switched from Hex to on device: get its model now, not at the first capture.
         let speech = crate::speech_model::current();
         if view["transcriber"]["engine"] == "apple"
             && speech.state == crate::speech_model::State::Unknown
