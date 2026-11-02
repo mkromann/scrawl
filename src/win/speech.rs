@@ -23,6 +23,8 @@ use crate::model::{TranscriptData, TranscriptSegment, WordTiming};
 const KHZ: u64 = 16;
 /// Silence kept around each clip, so first and last words aren't clipped.
 const CLIP_PAD_MS: u64 = 200;
+/// A clip's first word is taken to start with the clip's sound when the model puts it this close.
+const FIRST_WORD_SLACK_MS: u64 = 500;
 
 /// The model Scrawl downloads when Hex hasn't installed one: the same file, revision and
 /// checksum as Hex's `PARAKEET_UNIFIED_ENGLISH_ARTIFACT`.
@@ -140,6 +142,29 @@ fn models_in(support: &Path) -> Vec<PathBuf> {
     models
 }
 
+/// How late the model reports a word, which its times are moved back by. Parakeet Unified English
+/// is built for streaming and says a word 4 encoder frames (80 ms each) after it began: measured
+/// against the waveform, a median of 320 ms over 43 separated words and 360 ms over 116 sentence
+/// starts. Spoken cues only look 300 ms before a word, so they'd miss what they point at. Other
+/// models are unmeasured.
+fn word_lag_ms(model: &str) -> u64 {
+    if model.starts_with("parakeet-unified") {
+        320
+    } else {
+        0
+    }
+}
+
+/// After a pause the model is later still, about 600 ms however much silence it's given, and a
+/// pause is where "look" and "now" tend to be said. The clip's sound says when that word began.
+fn start_at_the_sound(words: &mut [WordTiming], clip_start: u64) {
+    if let Some(first) = words.first_mut()
+        && first.t0.saturating_sub(clip_start) <= FIRST_WORD_SLACK_MS
+    {
+        first.t0 = first.t0.min(clip_start);
+    }
+}
+
 /// The model's name for `TranscriptData.model`: its file name without the extension.
 fn model_name(path: &Path) -> String {
     path.file_stem()
@@ -179,6 +204,7 @@ pub fn transcribe(audio: &Path) -> Result<TranscriptData> {
         clips.push((0, duration_ms));
     }
     let name = model_name(&path);
+    let lag_ms = word_lag_ms(&name);
     let mut transcript = TranscriptData {
         source: format!("parakeet:{name}"),
         model: Some(name),
@@ -213,8 +239,8 @@ pub fn transcribe(audio: &Path) -> Result<TranscriptData> {
         if text.is_empty() {
             continue;
         }
-        let at = |ms: i64| from_ms + ms.max(0) as u64;
-        let words: Vec<WordTiming> = result
+        let at = |ms: i64| from_ms + (ms.max(0) as u64).saturating_sub(lag_ms);
+        let mut words: Vec<WordTiming> = result
             .words
             .iter()
             .filter(|word| !word.text.trim().is_empty())
@@ -224,6 +250,7 @@ pub fn transcribe(audio: &Path) -> Result<TranscriptData> {
                 text: word.text.trim().to_owned(),
             })
             .collect();
+        start_at_the_sound(&mut words, start);
         if words.is_empty() {
             // No word times from this model: spread the text over the clip, and say so.
             let (segments, words) = crate::hex::spread_words(&text, start, end);
@@ -231,7 +258,7 @@ pub fn transcribe(audio: &Path) -> Result<TranscriptData> {
             transcript.segments.extend(segments);
             transcript.words.extend(words);
         } else {
-            let segments: Vec<TranscriptSegment> = result
+            let mut segments: Vec<TranscriptSegment> = result
                 .segments
                 .iter()
                 .filter(|s| !s.text.trim().is_empty())
@@ -241,6 +268,9 @@ pub fn transcribe(audio: &Path) -> Result<TranscriptData> {
                     text: s.text.trim().to_owned(),
                 })
                 .collect();
+            if let Some(first) = segments.first_mut() {
+                first.t0 = first.t0.min(words[0].t0);
+            }
             transcript.segments.extend(if segments.is_empty() {
                 vec![TranscriptSegment {
                     t0: words[0].t0,
@@ -525,6 +555,33 @@ mod tests {
             }
         });
         Box::leak(url.into_boxed_str())
+    }
+
+    #[test]
+    fn only_the_model_measured_late_is_moved() {
+        assert_eq!(word_lag_ms("parakeet-unified-en-0.6b-Q8_0"), 320);
+        assert_eq!(word_lag_ms("parakeet-tdt-0.6b-v3-Q8_0"), 0);
+        assert_eq!(word_lag_ms("whisper-large-v3"), 0);
+    }
+
+    #[test]
+    fn a_clips_first_word_starts_with_its_sound_unless_it_came_much_later() {
+        let word = |t0| WordTiming {
+            t0,
+            t1: t0 + 80,
+            text: "look".into(),
+        };
+        let mut words = [word(8_680), word(8_760)];
+        start_at_the_sound(&mut words, 8_400);
+        assert_eq!((words[0].t0, words[0].t1), (8_400, 8_760));
+        assert_eq!(words[1].t0, 8_760);
+
+        // Noise or a breath opened the clip, and the word really is later.
+        let mut after_noise = [word(9_000)];
+        start_at_the_sound(&mut after_noise, 8_400);
+        assert_eq!(after_noise[0].t0, 9_000);
+
+        start_at_the_sound(&mut [], 8_400);
     }
 
     #[cfg(target_os = "macos")]
