@@ -775,6 +775,8 @@ impl ScrawlCoordinator {
         initial_bundle: Option<(PathBuf, ScrawlBundle)>,
     ) -> Self {
         crate::playback::warm_up();
+        #[cfg(scrawl_runtime_shaders)]
+        crate::native::shaders::warm_up();
         Self {
             telemetry,
             active_recording: None,
