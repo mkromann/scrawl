@@ -85,23 +85,26 @@ struct SettingsTranscriber: Decodable, Equatable {
   var models: [SettingsModelOption] = []
   var speech: SpeechStatus?
 
+  /// Automatic and any English are Parakeet's. It knows no other language, so the rest of the menu
+  /// is what Apple's recognizer knows (`locales`), and picking one says what that needs.
   static func languageMenu(saved: String, speech: SpeechStatus?) -> (value: String, selected: String, options: [(id: String, title: String, enabled: Bool)], note: String?) {
     func name(_ id: String) -> String { Locale.current.localizedString(forIdentifier: id) ?? id }
     let effective = speech?.locale ?? Locale.current.identifier
-    let automatic = "Automatic (\(name(saved == "auto" ? effective : Locale.current.identifier)))"
     let supported = (speech?.locales ?? []).map { (id: $0, title: name($0), enabled: true) }
       .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
-    var options: [(id: String, title: String, enabled: Bool)] = [("auto", automatic, true), ("-", "", false)] + supported
-    if saved == "auto" { return ("Automatic", "auto", options, nil) }
+    var options: [(id: String, title: String, enabled: Bool)] = [("auto", "Automatic (English)", true), ("-", "", false)] + supported
+    let english = saved == "auto" || saved.lowercased() == "en" || saved.lowercased().hasPrefix("en-")
+    let note = english ? nil : "\(name(saved)) goes to Apple's recognizer, which needs Speech Recognition and Dictation."
+    if saved == "auto" { return ("Automatic", "auto", options, note) }
     if let match = supported.first(where: { Locale(identifier: $0.id).language.maximalIdentifier == Locale(identifier: saved).language.maximalIdentifier }) {
-      return (match.title, match.id, options, nil)
+      return (match.title, match.id, options, note)
     }
     let unknown = supported.isEmpty
     let title = unknown ? name(saved) : "\(name(saved)) (not available)"
     options.append((saved, title, unknown))
-    let note = unknown ? nil : "\(name(saved)) isn't available on this Mac. Using \(name(effective))."
-    return (title, saved, options, note)
+    return (title, saved, options, unknown ? note : "\(name(saved)) isn't available on this Mac. Using \(name(effective)).")
   }
+
   /// The program's file name while transcribeCommand is usable.
   var command: String? = nil
 }
@@ -943,7 +946,7 @@ struct SettingsView: View {
   private var recording: some View {
     let t = state.transcriber
     let language = SettingsTranscriber.languageMenu(saved: t.appleLocale, speech: t.speech)
-    var engines: [(id: String, title: String, enabled: Bool)] = [("apple", "Apple Speech", true)]
+    var engines: [(id: String, title: String, enabled: Bool)] = [("apple", "Parakeet (on this Mac)", true)]
     engines.append(("hex", t.hexTitle, t.hexEnabled))
     if let command = t.command { engines.append(("command", "Command (\(command))", true)) }
     let chosenModel = t.models.first(where: \.chosen)
@@ -967,7 +970,7 @@ struct SettingsView: View {
       Color.clear.frame(height: 20)
       SettingsGroup {
         SettingsRow(title: "Transcription") {
-          SettingsPopup(value: engines.first { $0.id == t.engine }?.title ?? "Apple Speech", options: engines, selected: t.engine) {
+          SettingsPopup(value: engines.first { $0.id == t.engine }?.title ?? "Parakeet (on this Mac)", options: engines, selected: t.engine) {
             model.set("transcriber", $0)
           }
         }
@@ -995,10 +998,10 @@ struct SettingsView: View {
         }
       }
       SettingsCaption(text: t.engine == "command"
-        ? "Command runs transcribeCommand from config.json. If it fails, that recording uses Apple Speech."
+        ? "Command runs transcribeCommand from config.json. If it fails, that recording uses Parakeet."
         : t.hexEnabled || t.engine == "hex"
-        ? "Apple Speech times each word. Hex uses a model you have in Hex, and its word times are estimates."
-        : "Apple Speech runs on this Mac and times each word. Hex shows up here while Hex is running.")
+        ? "Parakeet times each word and knows English. Hex uses a model you have in Hex, and its word times are estimates."
+        : "Parakeet runs on this Mac, times each word and knows English. Hex shows up here while Hex is running.")
       if t.engine == "apple", let note = language.note {
         SettingsCaption(text: note)
       }
@@ -1603,10 +1606,10 @@ final class SettingsWindow: NSObject, NSApplicationDelegate, NSWindowDelegate {
     ])
     hex.videoExport = true
     var downloading = base
-    downloading.transcriber.speech = SpeechStatus(state: "downloading", locale: "en_US", progress: 0.42)
-    let locales = ["de-DE", "en-GB", "en-US", "es-ES", "fr-FR", "ja-JP", "ko-KR", "yue-CN", "zh-CN", "zh-TW"]
+    downloading.transcriber.speech = SpeechStatus(state: "downloading", engine: "Parakeet", locale: "en", progress: 0.42)
+    let locales = ["da-DK", "de-DE", "en-GB", "en-US", "es-ES", "fr-FR", "ja-JP", "ko-KR", "yue-CN", "zh-CN", "zh-TW"]
     var ready = base
-    ready.transcriber.speech = SpeechStatus(state: "ready", locale: "en_US", progress: 1, locales: locales)
+    ready.transcriber.speech = SpeechStatus(state: "ready", engine: "Parakeet", locale: "en", progress: 1, locales: locales)
     var language = base
     language.transcriber.appleLocale = "zh-TW"
     language.transcriber.speech = SpeechStatus(state: "ready", locale: "zh_TW", progress: 1, locales: locales)

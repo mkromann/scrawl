@@ -126,8 +126,8 @@ the bundle macOS grants. With Reduce Motion on, the card fades in place. Microph
 can't be dragged in, so they use the macOS prompt.
 
 Camera is asked for in the same window, with just its row, when first needed. Speech recognition
-isn't asked for: SpeechAnalyzer transcribes without it. The ⌥⇧S and ⌥⇧V hotkeys themselves need
-no permission (Carbon `RegisterEventHotKey`).
+isn't asked for: Parakeet transcribes without it. The ⌥⇧S and ⌥⇧V hotkeys themselves need no
+permission (Carbon `RegisterEventHotKey`).
 
 Until the required permissions are on, ⌥⇧S starts nothing (no picker or overlay that
 could sit over a macOS prompt): once the keys are released it brings the permissions window
@@ -168,7 +168,7 @@ granted and each on-demand sheet: `target/debug/scrawl-helper onboarding --rende
 
 - **General**: Launch at login, Send dev-site captures to OpenCode, and the two shortcuts, Record
   (`⌥⇧S`) and Paste last capture (`⌥⇧V`, which can be turned off).
-- **Recording**: the microphone, with its input level, the transcriber (Apple Speech with its
+- **Recording**: the microphone, with its input level, the transcriber (Parakeet with its
   language, Hex while it runs, with its model and language, or Command when it's configured) and,
   under Experimental, Video export.
 - **Storage**: how long recordings are kept, where new captures go (Change…/Reset on macOS, `"capturesDir"` in
@@ -682,11 +682,12 @@ hourly, at low priority, and logs what it did:
 
 ## Transcription
 
-Narration is transcribed on device by Apple's SpeechAnalyzer (macOS 26), or on macOS 15 by the
-older on-device `SFSpeechRecognizer`. On macOS 15 onboarding asks for Speech Recognition, and
-Dictation's on-device model has to be on the Mac (System Settings › Keyboard › Dictation); Scrawl
-never falls back to Apple's servers. Both report when every word was spoken. The word timings
-drive two things:
+Narration is transcribed on device by Parakeet (Parakeet Unified English through `transcribe.cpp`),
+which Scrawl downloads once at launch (731 MB) and which reports when every word was spoken. It
+knows English only. Choosing another language in Settings hands it to Apple's on-device recognizer:
+SpeechAnalyzer on macOS 26, or `SFSpeechRecognizer` before it, which needs the Speech Recognition
+permission and Dictation's on-device model (System Settings › Keyboard › Dictation). Scrawl never
+falls back to Apple's servers. The word timings drive two things:
 
 - **Text per keyframe.** Each keyframe's text runs from the start of the clause in progress when
   its moment began (the action, the transition, or the spoken cue) until the next keyframe, so the
@@ -698,9 +699,9 @@ drive two things:
   "there" count only when they coincide with a change, because they are usually filler. Speech
   pauses never cut keyframes.
 
-### Apple or Hex
+### Parakeet or Hex
 
-Apple's SpeechAnalyzer is the default; Scrawl prepares its language model automatically. If you use Hex
+Parakeet is the default; Scrawl prepares its model automatically. If you use Hex
 (2.2 or later, running), Scrawl can transcribe with it instead and with whichever model Hex has
 ready: Settings › Recording › **Transcription** → **Hex**, then pick a model under **Hex model**.
 Or in
@@ -710,27 +711,28 @@ Or in
 { "transcriber": "hex", "hexModel": "whisper_large_v3_turbo", "hexLanguage": "nl" }
 ```
 
-`"transcriber"` is `"apple"` (default), `"hex"` or `"command"` (below); `hexModel` defaults to the
+`"transcriber"` is `"apple"` (the on-device engine, the default), `"hex"` or `"command"` (below); `hexModel` defaults to the
 first ready one of `parakeet_unified_en`, `parakeet_v3`, `parakeet_v2`, `whisper_large_v3_turbo`.
 Scrawl never downloads or prepares a Hex model: install it in Hex first.
 
-**Language** in Settings › Recording picks the language Apple Speech transcribes; **Automatic**
-(the default) follows the Mac's language. In config it's `"appleLocale"`, e.g. `"zh-TW"` for
-Traditional Chinese (Taiwan). Scrawl downloads that language's model in the background, and a
-language this Mac doesn't support falls back to Automatic (Settings names the one it uses).
+**Language** in Settings › Recording picks the language to transcribe. **Automatic** (the default)
+and any English go to Parakeet; another language goes to Apple's recognizer. In config it's
+`"appleLocale"`, e.g. `"zh-TW"` for Traditional Chinese (Taiwan). Scrawl prepares that language's
+model in the background, and a language this Mac doesn't support uses what Apple's recognizer
+would pick instead (Settings names it).
 
 **Hex language** in Settings › Recording (or `"hexLanguage"` in config) sets the language
 code sent to Hex. It defaults to `en` to preserve existing behavior; use `nl` for Dutch or
 `auto` for automatic detection when the model supports it. Press Return or Apply to save;
 a blank field resets to `en`. Codes are not restricted to a list in Scrawl: Hex validates
 model/language support. If Hex rejects a language/model combination, Scrawl uses the existing
-Apple Speech fallback. This setting does not inherit Hex's dictation language. Whisper uses the selected
+on-device fallback. This setting does not inherit Hex's dictation language. Whisper uses the selected
 language to guide recognition; models such as Parakeet v3 determine language from audio
 and ignore the hint.
 
 - Hex is optional. When it isn't running, **Hex** is greyed out as "Hex (not running)" and Scrawl
-  uses Apple, whatever the saved preference. If Hex fails on a recording, that recording falls back
-  to Apple Speech (see `~/Library/Logs/Scrawl`).
+  uses Parakeet, whatever the saved preference. If Hex fails on a recording, that recording falls
+  back to Parakeet (see `~/Library/Logs/Scrawl`).
 - Hex returns text without word times, so Scrawl sends each stretch of speech separately and
   spreads its words across it by length. The transcript says `"source": "hex:<model>"` and
   `"estimated": true`; because those times are approximate, spoken cues ("now", "here") don't cut
@@ -759,7 +761,7 @@ stays in the file):
 - `transcribeCommand` is an argv array run directly: no shell, quoting, `~`, variables or globbing.
   `argv[0]` must be an absolute path. Every `{audio}` in the other arguments becomes the audio path;
   without one, the path is the last argument. Put your model's language in it too (`--language nl`):
-  Settings' **Language** is Apple Speech's alone. These keys are read on their own, so a mistake in
+  Settings' **Language** is the on-device engine's alone. These keys are read on their own, so a mistake in
   them never resets the rest of the config.
 - `transcribeTimeoutSeconds` is optional, a positive number of seconds: by default the limit is
   `max(300, 60 + 10 × audio seconds)`, wall clock from the start, model loading included.
@@ -791,7 +793,7 @@ stays in the file):
   drop that array and keep the text, spreading it as above when `words` are dropped.
 - The transcript says `"source": "command:<file name of argv[0]>"`. Anything else going wrong (a
   malformed `transcribeCommand` or timeout, the program missing, a non-zero exit, a timeout, invalid
-  JSON, another version) means Apple Speech transcribes that recording. Each problem is one line in
+  JSON, another version) means Parakeet transcribes that recording. Each problem is one line in
   `~/Library/Logs/Scrawl` (a malformed config only once), never with the program's output,
   arguments or what was said.
 
@@ -801,7 +803,7 @@ stays in the file):
 { "experiments": { "liveTranscribe": true } }
 ```
 
-With this in `~/.config/scrawl/config.json`, a Mac recording transcribed by Apple Speech streams the
+With this in `~/.config/scrawl/config.json`, a recording on macOS 26 transcribed on device streams the
 microphone to `scrawl-helper transcribe-stream` as it records, so finishing only waits for the last
 words (tens of milliseconds) instead of transcribing the whole recording. The streamed samples are
 exactly the ones `audio.wav` holds, so word times are on the same clock. If the stream fails, the
@@ -812,7 +814,7 @@ usual; the log says which (`Live transcription: …`). Hex and iPhone recordings
 ## Helper
 
 `scrawl-helper` is a small Swift executable built by `build.rs` from `helper/` and shipped inside
-`Scrawl.app` next to `scrawl`. It owns the Swift-only or unbound Apple frameworks: SpeechAnalyzer,
+`Scrawl.app` next to `scrawl`. It owns the Swift-only or unbound Apple frameworks: Apple's speech recognizers,
 CoreMediaIO/AVFoundation iPhone capture with the mirror window, AVFoundation movie decoding, and the
 SwiftUI welcome window (`onboarding`).
 Scrawl runs it as a subprocess (JSON on stdout; `stop`/`cancel` on stdin for the mirror). Run it
@@ -849,7 +851,7 @@ system owns differ:
 | Screen and window capture | ScreenCaptureKit | Windows.Graphics.Capture, H.264 through Media Foundation |
 | Clicks, keys, Shift ink | Mouse monitor, Accessibility key tap, modifier state | Low-level hooks and key state |
 | Ink overlay | Metal panel | Click-through GPUI window, left out of recordings |
-| Transcription | SpeechAnalyzer, or Hex | Parakeet on device (`transcribe.cpp`), Hex's model or Scrawl's own copy |
+| Transcription | Parakeet on device (`transcribe.cpp`) in a child process, Apple's recognizer for other languages, or Hex | Parakeet on device (`transcribe.cpp`), Hex's model or Scrawl's own copy |
 | Movie decoding | `scrawl-helper` (AVFoundation) | Media Foundation, in process |
 | Paste | `⌘V` | `Ctrl+V` |
 | Settings and welcome tour | SwiftUI (`scrawl-helper`) | GPUI windows in process, same panes and protocol |

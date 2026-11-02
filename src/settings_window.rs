@@ -1212,10 +1212,10 @@ impl SettingsWindow {
                 "Parakeet runs on this PC and times each word. Scrawl downloads its 730 MB model once, unless Hex already has it. Hex shows up here while Hex is running."
             }
             (false, true) => {
-                "Apple Speech times each word. Hex uses a model you have in Hex, and its word times are estimates."
+                "Parakeet times each word and knows English. Hex uses a model you have in Hex, and its word times are estimates."
             }
             (false, false) => {
-                "Apple Speech runs on this Mac and times each word. Hex shows up here while Hex is running."
+                "Parakeet runs on this Mac, times each word and knows English. Hex shows up here while Hex is running."
             }
         };
         let speech = match t.speech.state.as_str() {

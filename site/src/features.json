@@ -188,7 +188,7 @@
       "id": "live-transcribe",
       "group": "record",
       "name": "Transcribe while recording",
-      "says": "Streams the microphone to Apple Speech during the capture, so finishing waits only for the last words.",
+      "says": "On macOS 26, streams the microphone to Apple's SpeechAnalyzer during the capture, so finishing waits only for the last words.",
       "status": "experiment:liveTranscribe",
       "platforms": ["mac"],
       "added": "2026-10-19",
@@ -377,13 +377,13 @@
       "id": "apple-speech",
       "group": "agent",
       "name": "Apple Speech",
-      "says": "On-device transcription with word times: SpeechAnalyzer on macOS 26, SFSpeechRecognizer on macOS 15.",
+      "says": "On-device transcription with word times in languages Parakeet doesn't know: SpeechAnalyzer on macOS 26, SFSpeechRecognizer before it.",
       "status": "stable@0.3.4",
       "platforms": ["mac"],
-      "note": "Windows and Linux use Parakeet on device.",
+      "note": "English goes to Parakeet on every system.",
       "config": [
         { "key": "transcriber", "value": "\"apple\" | \"hex\" | \"command\"", "does": "Which engine transcribes" },
-        { "key": "appleLocale", "value": "\"zh-TW\"", "does": "Apple Speech language; absent follows the Mac" }
+        { "key": "appleLocale", "value": "\"zh-TW\"", "does": "Language to transcribe; absent or English is Parakeet" }
       ],
       "docs": ["README.md#transcription"]
     },
@@ -393,14 +393,14 @@
       "name": "Parakeet on device",
       "says": "Transcribes with Hex's Parakeet model, or downloads Scrawl's own copy (730 MB) at first launch.",
       "status": "stable@0.3.6",
-      "platforms": ["windows", "linux"],
-      "docs": ["docs/windows.md"]
+      "platforms": ["mac", "windows", "linux"],
+      "docs": ["docs/windows.md", "docs/keyframes-and-text.md"]
     },
     {
       "id": "hex",
       "group": "agent",
       "name": "Hex",
-      "says": "Transcribes with whichever model a running Hex has ready; falls back to Apple Speech if Hex fails.",
+      "says": "Transcribes with whichever model a running Hex has ready; falls back to Parakeet if Hex fails.",
       "status": "stable@0.3.4",
       "platforms": ["mac"],
       "note": "Hex's local API is Mac only.",
@@ -408,7 +408,7 @@
         { "key": "hexModel", "value": "\"parakeet_v3\"", "does": "Hex model to use" },
         { "key": "hexLanguage", "value": "\"en\" | \"nl\" | \"auto\"", "does": "Language sent to Hex" }
       ],
-      "docs": ["README.md#apple-or-hex"]
+      "docs": ["README.md#parakeet-or-hex"]
     },
     {
       "id": "command-transcriber",

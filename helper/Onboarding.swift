@@ -37,7 +37,8 @@ enum Permissions {
       "accessibility": AXIsProcessTrusted() ? "granted" : "not-determined",
       "camera": av(.video),
     ]
-    // Only SFSpeechRecognizer, the macOS 15 transcriber, needs it; SpeechAnalyzer doesn't.
+    // Only SFSpeechRecognizer needs it, and Scrawl only uses that for a language Parakeet doesn't
+    // know, so `helper::permissions` drops it otherwise. SpeechAnalyzer doesn't need it.
     if !SpeechModel.analyzer {
       switch SFSpeechRecognizer.authorizationStatus() {
       case .authorized: statuses["speech-recognition"] = "granted"
@@ -101,7 +102,8 @@ struct PermissionRow: Decodable, Equatable, Identifiable {
   var granted: Bool { status == "granted" }
 }
 
-/// Apple's speech model, which Scrawl installs in the background (`src/speech_model.rs`).
+/// The speech model, Parakeet or Apple's, which Scrawl installs in the background
+/// (`src/speech_model.rs`).
 struct SpeechStatus: Decodable, Equatable {
   var state = "unknown"
   var engine: String?
@@ -690,8 +692,8 @@ struct OnboardingView: View {
     }
   }
 
-  /// The row that carries the speech model's line: Speech Recognition where it's asked for
-  /// (macOS 15), else Microphone.
+  /// The row that carries the speech model's line: Speech Recognition where it's asked for,
+  /// else Microphone.
   private var speechRow: String {
     state.rows.contains { $0.permission == "speech-recognition" } ? "speech-recognition" : "microphone"
   }
