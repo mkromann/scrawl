@@ -20,7 +20,7 @@ use screencapturekit::prelude::*;
 
 use super::{ISLAND_H, LaserOverlay, MenuAction, PILL_WINDOW_H, PILL_WINDOW_W, motion};
 use crate::capture::SharedCaptureTelemetry;
-use crate::capture::sck_compat::{ImageFormat, SCScreenshotManager};
+use crate::capture::sck_compat::{ImageFormat, SCScreenshotManager, shareable_content};
 
 /// Where the file browser is called in buttons ("Show in Finder").
 pub(super) const FILE_MANAGER: &str = "Finder";
@@ -1049,8 +1049,8 @@ pub(super) fn capture_own_window_screenshot(
         }
     }
     let pid = std::process::id() as i32;
-    let content = SCShareableContent::get()
-        .map_err(|e| anyhow::anyhow!("ScreenCaptureKit unavailable: {e}"))?;
+    let content =
+        shareable_content().map_err(|e| anyhow::anyhow!("ScreenCaptureKit unavailable: {e}"))?;
     let window = content
         .windows()
         .into_iter()

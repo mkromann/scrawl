@@ -12,8 +12,9 @@ use std::time::{Duration, Instant};
 use screencapturekit::prelude::*;
 
 use super::sck_compat::{
-    SCRecordingOutput, SCRecordingOutputCodec, SCRecordingOutputConfiguration,
-    SCRecordingOutputFileType, SCScreenshotManager, SCStreamRecording,
+    CandidateStream, SCRecordingOutput, SCRecordingOutputCodec, SCRecordingOutputConfiguration,
+    SCRecordingOutputFileType, SCScreenshotManager, SCStreamRecording, shareable_content,
+    stop_stream,
 };
 use super::{
     CANDIDATE_EDGE, CANDIDATE_EDGE_NO_VIDEO, CARBON_CMD_KEY, CARBON_CONTROL_KEY, CARBON_OPTION_KEY,
@@ -21,7 +22,7 @@ use super::{
     ShortcutConfig, ShortcutKind, capture_size, clean_label, hotkey_combos, pick_display,
     poll_clicks, scrawl_log, track_shift_ink,
 };
-use crate::model::{CaptureMode, InteractionEvent, RgbaFrame, TargetInfo};
+use crate::model::{CaptureMode, InteractionEvent, TargetInfo};
 
 /// Recordings may hold up to twice a frame's size in points (Retina pixels).
 pub const MAX_CAPTURE_SCALE: f64 = 2.0;
@@ -631,7 +632,7 @@ pub fn screen_capture_usable(probe: bool) -> bool {
 /// `SCScreenshotManager`. Returns the image size. Asks for Screen Recording if it was never
 /// decided, so only call it once it's known to be granted (or from `scrawl sck-probe`).
 pub fn screen_capture_probe() -> Result<(u32, u32), String> {
-    let content = SCShareableContent::get().map_err(|e| format!("SCShareableContent: {e:?}"))?;
+    let content = shareable_content().map_err(|e| format!("SCShareableContent: {e:?}"))?;
     let display = content
         .displays()
         .into_iter()
@@ -780,7 +781,7 @@ pub fn discover_target(window_query: Option<&str>) -> TargetInfo {
 pub fn discover_target_at(window_query: Option<&str>, point: Option<[f64; 2]>) -> TargetInfo {
     let frontmost = frontmost_app_info();
     let screens = crate::screens::displays();
-    if let Ok(content) = SCShareableContent::get() {
+    if let Ok(content) = shareable_content() {
         let our_pid = std::process::id() as i32;
         if let Some(query) = window_query {
             let q = query.to_lowercase();
@@ -887,7 +888,7 @@ fn display_of(screens: &[crate::screens::Screen], rect: [f64; 4]) -> (u32, f64) 
 
 /// Lists all on-screen normal (`window_layer == 0`) windows in front-to-back order for the Window picker.
 pub fn list_selectable_windows() -> Vec<TargetInfo> {
-    let Ok(content) = SCShareableContent::get() else {
+    let Ok(content) = shareable_content() else {
         return Vec::new();
     };
     let our_pid = std::process::id() as i32;
@@ -1011,8 +1012,8 @@ pub fn frontmost_app_info() -> Option<(i32, String, Option<String>)> {
     None
 }
 
-/// The ScreenCaptureKit sampler: the recording stream writes `recording.mp4` while candidate
-/// screenshots are taken every `buffer.interval()` (or at once when urgent).
+/// The ScreenCaptureKit sampler: the recording stream writes `recording.mp4` while candidates
+/// are read from a small second stream every `buffer.interval()` (or at once when urgent).
 pub(super) fn run_sampler(sampler: Sampler) -> Option<PathBuf> {
     let Sampler {
         target: sampler_target,
@@ -1037,14 +1038,22 @@ pub(super) fn run_sampler(sampler: Sampler) -> Option<PathBuf> {
         started_at,
         &thread_offset,
     );
-    crate::ui::start_metric("sck_ready_ms", started_at);
     let shot_edge = if video_path.is_some() {
         CANDIDATE_EDGE
     } else {
         CANDIDATE_EDGE_NO_VIDEO
     };
     let shot_config = sck_config(&sampler_target, shot_edge);
-    let mut filter_and_config = filter.map(|f| (f, shot_config));
+    let candidates = filter.and_then(|filter| {
+        CandidateStream::start(&filter, &shot_config)
+            .map_err(|error| scrawl_log(format!("Candidate stream failed: {error}")))
+            .ok()
+    });
+    crate::ui::start_metric("sck_ready_ms", started_at);
+    scrawl_log(format!(
+        "Capture ready in {} ms",
+        started_at.elapsed().as_millis()
+    ));
     let mut last_sample = Instant::now()
         .checked_sub(FRAME_SAMPLE_INTERVAL)
         .unwrap_or_else(Instant::now);
@@ -1077,8 +1086,15 @@ pub(super) fn run_sampler(sampler: Sampler) -> Option<PathBuf> {
                 {
                     scrawl_log(format!("Recording filter update failed: {error:?}"));
                 }
-                filter_and_config = Some((new_filter, sck_config(&sampler_target, shot_edge)));
+                if let Some(ref candidates) = candidates
+                    && let Err(error) = candidates.update_content_filter(&new_filter)
+                {
+                    scrawl_log(format!("Candidate filter update failed: {error}"));
+                }
             }
+        }
+        if let Some(ref output) = recording_output {
+            output.tick();
         }
         let urgent = thread_urgent.swap(false, Ordering::AcqRel);
         let interval = thread_frames
@@ -1097,13 +1113,12 @@ pub(super) fn run_sampler(sampler: Sampler) -> Option<PathBuf> {
             if urgent {
                 phase = phase.saturating_add(1);
             }
-            let frame = if let Some((ref filter, ref config)) = filter_and_config {
-                capture_sck_frame(filter, config, t_ms).unwrap_or_else(|| {
+            let frame = candidates
+                .as_ref()
+                .and_then(|candidates| candidates.frame(t_ms, urgent))
+                .unwrap_or_else(|| {
                     crate::render::render_synthetic_demo_frame(1280, 800, t_ms, phase)
-                })
-            } else {
-                crate::render::render_synthetic_demo_frame(1280, 800, t_ms, phase)
-            };
+                });
             thread_frames
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1111,20 +1126,24 @@ pub(super) fn run_sampler(sampler: Sampler) -> Option<PathBuf> {
         }
         thread::park_timeout(Duration::from_millis(30));
     }
-    if let Some(stream) = stream {
-        let _ = stream.stop_capture();
-        if let Some(ref output) = recording_output {
-            let _ = stream.remove_recording_output(output);
-        }
+    if let Some(ref output) = recording_output {
+        output.stop_taking_frames();
     }
-    video_path
+    if let Some(candidates) = candidates {
+        candidates.stop();
+    }
+    if let Some(stream) = stream {
+        stop_stream(&stream);
+    }
+    // A movie that didn't close isn't one: the candidates stand in for it.
+    video_path.filter(|_| recording_output.is_some_and(|output| output.finish()))
 }
 
 fn build_sck_filter_and_config(
     target: &TargetInfo,
     excluded_window_ids: &[u32],
 ) -> Option<(SCContentFilter, SCStreamConfiguration)> {
-    let content = match SCShareableContent::get() {
+    let content = match shareable_content() {
         Ok(c) => c,
         Err(err) => {
             // Screen Recording is asked for in onboarding, never mid-capture.
@@ -1210,14 +1229,14 @@ fn sck_config(target: &TargetInfo, long_edge: f64) -> SCStreamConfiguration {
     config
 }
 
-/// Starts the recording stream; returns it with the filter for candidate screenshots. Stores
-/// when the recording started (ms since `started_at`) into `video_offset_ms`.
+/// Starts the recording stream; returns it with the filter for the candidates. The recording
+/// stores when it started (ms since `started_at`) into `video_offset_ms`, at its first frame.
 fn setup_sck_capture(
     target: &TargetInfo,
     video_output_path: Option<PathBuf>,
     excluded_window_ids: &[u32],
     started_at: Instant,
-    video_offset_ms: &AtomicU64,
+    video_offset_ms: &Arc<AtomicU64>,
 ) -> (
     Option<SCStream>,
     Option<SCRecordingOutput>,
@@ -1233,17 +1252,15 @@ fn setup_sck_capture(
             && let Ok(rec_cfg) = rec_cfg_builder.with_output_url(&video_path).map(|c| {
                 c.with_video_codec(SCRecordingOutputCodec::H264)
                     .with_output_file_type(SCRecordingOutputFileType::MP4)
+                    .with_size(config.width(), config.height())
+                    .with_clock(started_at, Arc::clone(video_offset_ms))
             })
             && let Some(rec_output) = SCRecordingOutput::new(&rec_cfg)
-            && let Ok(stream) = SCStream::new(&filter, &config)
+            && let Ok(mut stream) =
+                SCStream::new(&filter, &SCRecordingOutput::stream_config(&config))
             && stream.add_recording_output(&rec_output).is_ok()
         {
-            // The movie's clock starts while `start_capture` runs; its midpoint is the closest
-            // estimate this side of the recording delegate.
-            let before = started_at.elapsed();
             if stream.start_capture().is_ok() {
-                let after = started_at.elapsed();
-                video_offset_ms.store(((before + after) / 2).as_millis() as u64, Ordering::Release);
                 return (
                     Some(stream),
                     Some(rec_output),
@@ -1255,24 +1272,6 @@ fn setup_sck_capture(
     }
 
     (None, None, None, Some(filter))
-}
-
-fn capture_sck_frame(
-    filter: &SCContentFilter,
-    config: &SCStreamConfiguration,
-    t_ms: u64,
-) -> Option<RgbaFrame> {
-    let image = SCScreenshotManager::capture_image(filter, config).ok()?;
-    let width = u32::try_from(image.width()).ok()?;
-    let height = u32::try_from(image.height()).ok()?;
-    if width == 0 || height == 0 {
-        return None;
-    }
-    let rgba = image.rgba_data().ok()?;
-    if rgba.len() != (width as usize) * (height as usize) * 4 {
-        return None;
-    }
-    Some(RgbaFrame::new(t_ms, width, height, rgba))
 }
 
 /// macOS prompts over a capture (`windows::system_prompts_over`): ScreenCaptureKit's "bypass
@@ -1340,7 +1339,7 @@ fn sck_lists_windows(ids: &[u32]) -> Vec<u32> {
     if ids.is_empty() {
         return Vec::new();
     }
-    SCShareableContent::get()
+    shareable_content()
         .map(|content| {
             content
                 .windows()
