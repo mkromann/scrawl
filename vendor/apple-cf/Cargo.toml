@@ -1,0 +1,35 @@
+[package]
+name = "apple-cf"
+version = "0.11.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/doom-fish/apple-cf-rs"
+repository = "https://github.com/doom-fish/apple-cf-rs"
+description = "Safe Rust bindings for Apple's shared Core* frameworks (CoreFoundation, CoreMedia, CoreVideo, CoreGraphics, IOSurface, Dispatch)."
+authors = ["Per Johansson <per@doom.fish>"]
+rust-version = "1.82"
+build = "build.rs"
+
+[lib]
+name = "apple_cf"
+crate-type = ["lib"]
+
+[features]
+default = ["cg", "iosurface", "dispatch", "cm", "cv"]
+
+# Per-framework feature flags. They gate the Rust modules only; the Swift
+# bridge and every framework it uses are always built and linked.
+cg = []
+iosurface = []
+dispatch = []
+cm = []
+cv = ["iosurface"] # CVPixelBuffer's IOSurface accessor needs the IOSurface wrapper
+
+# Convenience aggregate.
+all-frameworks = ["cg", "iosurface", "dispatch", "cm", "cv"]
+
+# Deprecated: the Metal interop module moved to its own crate.
+metal = []
+
+[dependencies]
+doom-fish-utils = { version = ">=0.4.1, <0.5" }

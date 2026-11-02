@@ -24,14 +24,14 @@ core-graphics = "0.24.0"
 core-graphics-types = "0.1.3"
 core-text = "21.0.0"
 core-video = "0.4.3"
-gpui = { version = "0.2.2", default-features = false, features = ["font-kit"] }
+gpui = { version = "0.2.2", default-features = false, features = ["font-kit", "runtime_shaders"] }
 objc2 = "0.6.4"
 objc2-app-kit = { version = "0.3.2", features = ["NSPasteboard", "NSPasteboardItem"] }
 objc2-core-foundation = "0.3.2"
 objc2-foundation = { version = "0.3.2", features = ["NSArray", "NSData", "NSString"] }
 objc2-quartz-core = { version = "0.3.2", features = ["CALayer"] }
 metal = "0.29.0"
-screencapturekit = { version = "=11.0.0", features = ["macos_15_0"] }
+screencapturekit = { version = "=11.0.0", features = ["macos_13_0"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 ab_glyph = "0.2.32"
@@ -93,6 +93,11 @@ windows = { version = "0.61.3", features = [
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 embed-resource = "3"
+
+# Both only so `screencapturekit` builds with the macOS 13 SDK: see vendor/README.md.
+[patch.crates-io]
+apple-cf = { path = "vendor/apple-cf" }
+apple-metal = { path = "vendor/apple-metal" }
 
 [profile.dev]
 debug = 0

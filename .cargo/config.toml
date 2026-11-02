@@ -2,4 +2,4 @@
 # The oldest macOS Scrawl runs on (LSMinimumSystemVersion). Without it, C dependencies built
 # through `cc` (psm, ring) take the build machine's SDK version as their minimum, and that ends
 # up in the `scrawl` binary's LC_BUILD_VERSION.
-MACOSX_DEPLOYMENT_TARGET = "15.0"
+MACOSX_DEPLOYMENT_TARGET = "13.0"

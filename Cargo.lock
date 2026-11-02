@@ -144,8 +144,6 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 [[package]]
 name = "apple-cf"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "acc8e8f378f5bbd99f5850a95e55cbfd20e14db63d1eee16a060528cf960876e"
 dependencies = [
  "doom-fish-utils",
 ]
@@ -153,12 +151,6 @@ dependencies = [
 [[package]]
 name = "apple-metal"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00a23f6df783ca6a2def6201afc6bd54c1d41454e35552309166432155b544fc"
-dependencies = [
- "doom-fish-utils",
- "libc",
-]
 
 [[package]]
 name = "ar_archive_writer"

@@ -1,0 +1,13 @@
+[package]
+name = "apple-metal"
+version = "0.10.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "What screencapturekit needs of apple-metal, without its Swift bridge. See vendor/README.md."
+publish = false
+
+[lib]
+path = "lib.rs"
+
+[features]
+default = []

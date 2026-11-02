@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
+    println!("cargo:rustc-check-cfg=cfg(scrawl_runtime_shaders)");
     #[cfg(windows)]
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         embed_windows_resources();
@@ -12,6 +13,7 @@ fn main() {
     }
     compile_laser_shader();
     compile_helper();
+    link_swift_toolchain();
     println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
     if let Ok(output) = Command::new("xcode-select").arg("-p").output()
         && output.status.success()
@@ -111,7 +113,56 @@ END
         .expect("compile the Windows resources");
 }
 
+/// The swift.org toolchain `scripts/macos13-env.sh` chooses on a Mac without Xcode, where xcrun
+/// ignores TOOLCHAINS and only ever finds Command Line Tools' older Swift. None with Xcode.
+fn swift_toolchain() -> Option<PathBuf> {
+    println!("cargo:rerun-if-env-changed=SCRAWL_SWIFT_TOOLCHAIN");
+    std::env::var_os("SCRAWL_SWIFT_TOOLCHAIN").map(PathBuf::from)
+}
+
+/// Objects from a Swift newer than the SDK's autolink its compatibility libraries, which only
+/// that toolchain has. The SDK goes first so the Swift runtime still comes from the OS rather
+/// than the toolchain's own `@rpath` copy.
+fn link_swift_toolchain() {
+    let Some(toolchain) = swift_toolchain() else {
+        return;
+    };
+    let sdk = Command::new("xcrun")
+        .args(["--sdk", "macosx", "--show-sdk-path"])
+        .output()
+        .expect("xcrun is required to find the macOS SDK");
+    let sdk = String::from_utf8_lossy(&sdk.stdout);
+    println!("cargo:rustc-link-search=native={}/usr/lib/swift", sdk.trim());
+    println!(
+        "cargo:rustc-link-search=native={}",
+        toolchain.join("usr/lib/swift/macosx").display()
+    );
+}
+
+/// The major version of the macOS SDK. An SDK that can't be read counts as a current one, which
+/// is what the build expected before it asked.
+fn sdk_major() -> u32 {
+    Command::new("xcrun")
+        .args(["--sdk", "macosx", "--show-sdk-version"])
+        .output()
+        .ok()
+        .and_then(|output| {
+            let version = String::from_utf8(output.stdout).ok()?;
+            version.trim().split('.').next()?.parse().ok()
+        })
+        .unwrap_or(26)
+}
+
 fn compile_laser_shader() {
+    // Command Line Tools have no `metal`, so the shaders ship as source (`native::shaders`).
+    let has_metal = Command::new("xcrun")
+        .args(["-f", "metal"])
+        .output()
+        .is_ok_and(|output| output.status.success());
+    if !has_metal {
+        println!("cargo:rustc-cfg=scrawl_runtime_shaders");
+        return;
+    }
     for (src_rel, name) in [
         ("src/laser_overlay.metal", "laser_overlay"),
         ("src/native/pill/pill.metal", "pill"),
@@ -189,9 +240,25 @@ fn compile_helper() {
     }
     .to_owned();
     let built = out_dir.join("scrawl-helper");
-    let status = Command::new("xcrun")
-        .args(["swiftc", "-O", "-swift-version", "5", "-target"])
-        .arg(format!("{arch}-apple-macos15.0"))
+    let mut swiftc = match swift_toolchain() {
+        Some(toolchain) => Command::new(toolchain.join("usr/bin/swiftc")),
+        None => {
+            let mut xcrun = Command::new("xcrun");
+            xcrun.arg("swiftc");
+            xcrun
+        }
+    };
+    // Before the macOS 14 SDK the helper builds with `SDKCompat.swift`, for macOS 13.
+    let sdk = sdk_major();
+    let minimum = if sdk >= 14 { "15.0" } else { "13.0" };
+    for (define, since) in [("SCRAWL_SDK_14", 14), ("SCRAWL_SDK_26", 26)] {
+        if sdk >= since {
+            swiftc.arg(format!("-D{define}"));
+        }
+    }
+    let status = swiftc
+        .args(["-O", "-swift-version", "5", "-target"])
+        .arg(format!("{arch}-apple-macos{minimum}"))
         .args(&sources)
         .arg("-o")
         .arg(&built)
@@ -209,7 +276,8 @@ fn compile_helper() {
         .expect("xcrun swiftc is required to build scrawl-helper");
     assert!(
         status.success(),
-        "scrawl-helper failed to compile (needs the macOS 26 SDK; the result runs on macOS 15)"
+        "scrawl-helper failed to compile (needs the macOS 26 SDK for all of it; on macOS 13 \
+         source scripts/macos13-env.sh first)"
     );
     let dest = profile_dir.join("scrawl-helper");
     let _ = std::fs::remove_file(&dest);
