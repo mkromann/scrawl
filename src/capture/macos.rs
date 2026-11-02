@@ -10,12 +10,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use screencapturekit::prelude::*;
-use screencapturekit::recording_output::{
-    SCRecordingOutput, SCRecordingOutputCodec, SCRecordingOutputConfiguration,
-    SCRecordingOutputFileType,
-};
-use screencapturekit::screenshot_manager::{CGImageExt, SCScreenshotManager};
 
+use super::sck_compat::{
+    SCRecordingOutput, SCRecordingOutputCodec, SCRecordingOutputConfiguration,
+    SCRecordingOutputFileType, SCScreenshotManager, SCStreamRecording,
+};
 use super::{
     CANDIDATE_EDGE, CANDIDATE_EDGE_NO_VIDEO, CARBON_CMD_KEY, CARBON_CONTROL_KEY, CARBON_OPTION_KEY,
     CARBON_SHIFT_KEY, FRAME_SAMPLE_INTERVAL, LiveOverlayEvent, Sampler, SharedCaptureTelemetry,

@@ -17,10 +17,10 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{MainThreadMarker, NSData, NSObject, NSSize, NSString};
 use screencapturekit::prelude::*;
-use screencapturekit::screenshot_manager::{CGImageExt, SCScreenshotManager};
 
 use super::{ISLAND_H, LaserOverlay, MenuAction, PILL_WINDOW_H, PILL_WINDOW_W, motion};
 use crate::capture::SharedCaptureTelemetry;
+use crate::capture::sck_compat::{ImageFormat, SCScreenshotManager};
 
 /// Where the file browser is called in buttons ("Show in Finder").
 pub(super) const FILE_MANAGER: &str = "Finder";
@@ -1078,7 +1078,7 @@ pub(super) fn capture_own_window_screenshot(
             out_path
                 .to_str()
                 .ok_or_else(|| anyhow::anyhow!("invalid output path"))?,
-            screencapturekit::screenshot_manager::ImageFormat::Png,
+            ImageFormat::Png,
         )
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(())

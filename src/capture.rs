@@ -16,6 +16,8 @@ use crate::model::{
 #[cfg_attr(target_os = "windows", path = "capture/windows.rs")]
 mod platform;
 pub use platform::*;
+#[cfg(target_os = "macos")]
+pub mod sck_compat;
 
 pub const FRAME_SAMPLE_INTERVAL: Duration = Duration::from_millis(220);
 /// Candidate frames only feed scene diffs and keyframe selection; the keyframes themselves are
