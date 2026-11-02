@@ -30,3 +30,18 @@ pub fn warm_up() {
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What the metallib's target check covers elsewhere: without one, it's this macOS's Metal
+    /// that has to accept the source, and an error here would leave the overlay shut.
+    #[test]
+    fn both_shaders_compile_from_source() {
+        let device = metal::Device::system_default().expect("a Metal device");
+        for source in [LASER, PILL] {
+            library(&device, source).expect("the shader compiles");
+        }
+    }
+}

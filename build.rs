@@ -13,7 +13,7 @@ fn main() {
     }
     compile_laser_shader();
     compile_helper();
-    link_swift_toolchain();
+    link_swift_libraries();
     println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
     if let Ok(output) = Command::new("xcode-select").arg("-p").output()
         && output.status.success()
@@ -120,22 +120,18 @@ fn swift_toolchain() -> Option<PathBuf> {
     std::env::var_os("SCRAWL_SWIFT_TOOLCHAIN").map(PathBuf::from)
 }
 
-/// Objects from a Swift newer than the SDK's autolink its compatibility libraries, which only
-/// that toolchain has. The SDK goes first so the Swift runtime still comes from the OS rather
-/// than the toolchain's own `@rpath` copy.
-fn link_swift_toolchain() {
-    let Some(toolchain) = swift_toolchain() else {
-        return;
-    };
+/// The Swift bridges autolink the Swift libraries by name, and the linker doesn't look in the
+/// SDK's directory by itself. The real `apple-metal` used to add the Xcode toolchain's (see
+/// `vendor/README.md`).
+fn link_swift_libraries() {
     let sdk = Command::new("xcrun")
         .args(["--sdk", "macosx", "--show-sdk-path"])
         .output()
         .expect("xcrun is required to find the macOS SDK");
     let sdk = String::from_utf8_lossy(&sdk.stdout);
-    println!("cargo:rustc-link-search=native={}/usr/lib/swift", sdk.trim());
     println!(
-        "cargo:rustc-link-search=native={}",
-        toolchain.join("usr/lib/swift/macosx").display()
+        "cargo:rustc-link-search=native={}/usr/lib/swift",
+        sdk.trim()
     );
 }
 

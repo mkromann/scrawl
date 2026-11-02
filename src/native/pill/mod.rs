@@ -198,10 +198,8 @@ impl MetalPipelines {
         #[cfg(scrawl_runtime_shaders)]
         let library = crate::native::shaders::library(&device, crate::native::shaders::PILL);
         #[cfg(not(scrawl_runtime_shaders))]
-        let library = device.new_library_with_data(include_bytes!(concat!(
-            env!("OUT_DIR"),
-            "/pill.metallib"
-        )));
+        let library = device
+            .new_library_with_data(include_bytes!(concat!(env!("OUT_DIR"), "/pill.metallib")));
         let library = library.map_err(|e| format!("Failed to load pill.metallib: {e}"))?;
 
         let make_pipeline = |vs_name: &str,
