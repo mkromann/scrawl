@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
   <key>CFBundleIdentifier</key>
-  <string>dev.kitlangton.scrawl.helper</string>
+  <string>dev.kromann.scrawl.helper</string>
   <key>CFBundleName</key>
   <string>Scrawl Helper</string>
   <key>NSCameraUsageDescription</key>

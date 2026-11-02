@@ -11,15 +11,13 @@ CONTENTS_DIR="${APP_DIR}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
 RESOURCES_DIR="${CONTENTS_DIR}/Resources"
 FRAMEWORKS_DIR="${CONTENTS_DIR}/Frameworks"
-SIGN_ID="Developer ID Application: Christopher Langton (QC99C9JE59)"
-SPARKLE_PUBLIC_KEY="mIek27lttJe8cIBqVZFhh6reRKjpTx1h9ZY9OKWPtuM="
+VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "${REPO_DIR}/Cargo.toml" | head -1)"
 
 cd "${REPO_DIR}"
-chmod +x "${REPO_DIR}/scripts/setup-sparkle.sh" "${REPO_DIR}/scripts/release-app.sh" 2>/dev/null || true
-SPARKLE_DIR="$("${REPO_DIR}/scripts/setup-sparkle.sh" 2>/dev/null || true)"
+source "${REPO_DIR}/scripts/macos13-env.sh"
 taskpolicy -c utility cargo build -j 3
 
-mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}" "${FRAMEWORKS_DIR}" "${HOME}/bin"
+mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}" "${HOME}/bin"
 
 rm -f "${MACOS_DIR}/scrawl" "${MACOS_DIR}/scrawl-helper"
 cp -f "${REPO_DIR}/target/debug/scrawl" "${MACOS_DIR}/scrawl"
@@ -30,10 +28,9 @@ if [[ -f "${REPO_DIR}/assets/Scrawl.icns" ]]; then
   cp -f "${REPO_DIR}/assets/Scrawl.icns" "${RESOURCES_DIR}/Scrawl.icns"
 fi
 
-if [[ -n "${SPARKLE_DIR}" && -d "${SPARKLE_DIR}/Sparkle.framework" ]]; then
-  rm -rf "${FRAMEWORKS_DIR}/Sparkle.framework"
-  /usr/bin/ditto "${SPARKLE_DIR}/Sparkle.framework" "${FRAMEWORKS_DIR}/Sparkle.framework"
-fi
+# No Sparkle: an update from upstream's appcast would replace this build with one that can't run
+# here. This also clears it from a bundle an older script made.
+rm -rf "${FRAMEWORKS_DIR}"
 
 cat > "${CONTENTS_DIR}/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -45,7 +42,7 @@ cat > "${CONTENTS_DIR}/Info.plist" <<PLIST
   <key>CFBundleIconFile</key>
   <string>Scrawl</string>
   <key>CFBundleIdentifier</key>
-  <string>dev.kitlangton.scrawl</string>
+  <string>dev.kromann.scrawl</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
@@ -55,11 +52,11 @@ cat > "${CONTENTS_DIR}/Info.plist" <<PLIST
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
+  <string>${VERSION}</string>
   <key>CFBundleVersion</key>
   <string>1</string>
   <key>LSMinimumSystemVersion</key>
-  <string>15.0</string>
+  <string>13.0</string>
   <key>LSUIElement</key>
   <true/>
   <key>NSHighResolutionCapable</key>
@@ -74,37 +71,18 @@ cat > "${CONTENTS_DIR}/Info.plist" <<PLIST
   <string>Scrawl transcribes your narration on this Mac.</string>
   <key>NSAppleEventsUsageDescription</key>
   <string>Scrawl reads the address of the browser tab you captured, to send a capture of a dev site to its project's session.</string>
-  <key>SUEnableAutomaticChecks</key>
-  <false/>
-  <key>SUAutomaticallyUpdate</key>
-  <false/>
-  <key>SUAllowsAutomaticUpdates</key>
-  <false/>
-  <key>SUFeedURL</key>
-  <string>https://scrawl.kitlangton.com/appcast.xml</string>
-  <key>SUPublicEDKey</key>
-  <string>${SPARKLE_PUBLIC_KEY}</string>
-  <key>SUVerifyUpdateBeforeExtraction</key>
-  <true/>
 </dict>
 </plist>
 PLIST
 
-if security find-identity -v -p codesigning 2>/dev/null | grep -q "${SIGN_ID}"; then
-  IDENTITY="${SIGN_ID}"
-else
+# A certificate of this Mac's own, so macOS keeps Scrawl's permissions across rebuilds.
+IDENTITY="$("${REPO_DIR}/scripts/setup-signing.sh")" || IDENTITY=""
+if [[ -z "${IDENTITY}" ]]; then
+  echo "warning: signing ad hoc, so macOS will forget Scrawl's permissions at every rebuild" >&2
   IDENTITY="-"
 fi
-if [[ -d "${FRAMEWORKS_DIR}/Sparkle.framework/Versions/B" ]]; then
-  SPARKLE_VER="${FRAMEWORKS_DIR}/Sparkle.framework/Versions/B"
-  codesign --force --sign "${IDENTITY}" "${SPARKLE_VER}/XPCServices/Installer.xpc"
-  codesign --force --sign "${IDENTITY}" --preserve-metadata=entitlements "${SPARKLE_VER}/XPCServices/Downloader.xpc"
-  codesign --force --sign "${IDENTITY}" "${SPARKLE_VER}/Autoupdate"
-  codesign --force --sign "${IDENTITY}" "${SPARKLE_VER}/Updater.app"
-  codesign --force --sign "${IDENTITY}" "${FRAMEWORKS_DIR}/Sparkle.framework"
-fi
-codesign --force --sign "${IDENTITY}" --identifier "dev.kitlangton.scrawl.helper" "${MACOS_DIR}/scrawl-helper"
-codesign --force --sign "${IDENTITY}" --identifier "dev.kitlangton.scrawl" "${APP_DIR}"
+codesign --force --sign "${IDENTITY}" --identifier "dev.kromann.scrawl.helper" "${MACOS_DIR}/scrawl-helper"
+codesign --force --sign "${IDENTITY}" --identifier "dev.kromann.scrawl" "${APP_DIR}"
 
 if [[ "${SCRAWL_NO_LAUNCH:-0}" == "1" ]]; then
   exit 0

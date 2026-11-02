@@ -337,7 +337,7 @@ fn open(request: Request, cx: &mut App) {
             is_resizable: false,
             is_minimizable: true,
             window_background: WindowBackgroundAppearance::Opaque,
-            app_id: Some("dev.kitlangton.scrawl".into()),
+            app_id: Some("dev.kromann.scrawl".into()),
             ..Default::default()
         },
         move |window, cx| {
