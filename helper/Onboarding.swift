@@ -426,6 +426,8 @@ struct PermissionInfo {
 /// What System Settings calls the Accessibility list. macOS 27 renamed it.
 let accessibilityName = ProcessInfo.processInfo.isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion: 27, minorVersion: 0, patchVersion: 0))
   ? "Device Control and Data Access" : "Accessibility"
+/// `accessibility` is a macOS 14 symbol, and a missing symbol draws nothing.
+let accessibilitySymbol = NSImage(systemSymbolName: "accessibility", accessibilityDescription: nil) == nil ? "figure.arms.open" : "accessibility"
 
 func permissionInfo(_ permission: String, paste: String) -> PermissionInfo {
   switch permission {
@@ -434,7 +436,7 @@ func permissionInfo(_ permission: String, paste: String) -> PermissionInfo {
   case "microphone":
     return PermissionInfo(symbol: "mic", name: "Microphone", why: "Hear what you say while you record")
   case "accessibility":
-    return PermissionInfo(symbol: "accessibility", name: accessibilityName, why: "Undo with ⌘Z while you record, and paste with \(paste)")
+    return PermissionInfo(symbol: accessibilitySymbol, name: accessibilityName, why: "Undo with ⌘Z while you record, and paste with \(paste)")
   case "camera":
     return PermissionInfo(symbol: "iphone", name: "Camera", why: "Show and record a cabled iPhone")
   case "speech-recognition":

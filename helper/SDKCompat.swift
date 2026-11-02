@@ -22,9 +22,10 @@ struct Spring {
   private var omega: Double { 2 * .pi / duration }
   private var zeta: Double { 1 - bounce }
 
-  /// Until under 0.1% of a unit step is left: (1 + x) e⁻ˣ = 0.001 at x ≈ 9.23 without bounce.
+  /// Until under 0.1% of a unit step is left: (1 + x) e⁻ˣ = 0.001 at x ≈ 9.23 without bounce,
+  /// and the envelope e^(−ζωt) / √(1 − ζ²) with it.
   var settlingDuration: Double {
-    zeta >= 1 ? 9.2334 / omega : log(1000) / (zeta * omega)
+    zeta >= 1 ? 9.2334 / omega : log(1000 / (1 - zeta * zeta).squareRoot()) / (zeta * omega)
   }
 
   /// `(displacement, velocity)` at `time`, measured from the target.
