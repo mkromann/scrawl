@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Upstream's, for Kit's Macs. This fork runs install-app.sh on the Mac itself (docs/macos-13.md); here
+# the Developer ID warning below always fires.
+#
 # Installs the current `main` as ~/Applications/Scrawl.app on another Mac over SSH (default: pro).
 #
 # Two macOS rules shape this. Signing needs the login keychain, which only processes in the GUI

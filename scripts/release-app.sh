@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Upstream's release: Kit's Developer ID, notarization, Sparkle, macOS 15. This fork doesn't release
+# and nothing here applies to it; it installs with install-app.sh (docs/macos-13.md).
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

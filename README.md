@@ -1,5 +1,7 @@
 # Scrawl
 
+> This is a fork that runs on macOS 13 Ventura. Build it from source: see [docs/macos-13.md](docs/macos-13.md).
+
 Show an agent a problem instead of describing it.
 
 Press a shortcut (`⌥⇧S`) and Scrawl starts recording the screen. Talk, click around, draw on it, and press `⌥⇧S` again to finish. Scrawl records the screen, your voice, and your marks, then packs them into a compact bundle: a contact sheet of annotated keyframes (`contact-sheet.png`), individual full-resolution keyframes (`frames/frame-XX.png`), a time-aligned transcript and interaction timeline (`summary.md`), and a structured manifest (`scrawl.json`).
@@ -153,7 +155,7 @@ permissions screen at launch. `SCRAWL_NO_ONBOARDING=1` skips it.
 To replay it from scratch:
 
 ```sh
-tccutil reset All dev.kitlangton.scrawl
+tccutil reset All dev.kromann.scrawl
 jq 'del(.onboarding)' ~/.config/scrawl/config.json > /tmp/c.json && mv /tmp/c.json ~/.config/scrawl/config.json
 # then quit and reopen Scrawl
 ```

@@ -380,7 +380,7 @@
       "says": "On-device transcription with word times in languages Parakeet doesn't know: SpeechAnalyzer on macOS 26, SFSpeechRecognizer before it.",
       "status": "stable@0.3.4",
       "platforms": ["mac"],
-      "note": "English goes to Parakeet on every system.",
+      "note": "English goes to Parakeet on every system. SFSpeechRecognizer needs the Speech Recognition permission and Dictation's model.",
       "config": [
         { "key": "transcriber", "value": "\"apple\" | \"hex\" | \"command\"", "does": "Which engine transcribes" },
         { "key": "appleLocale", "value": "\"zh-TW\"", "does": "Language to transcribe; absent or English is Parakeet" }
@@ -784,8 +784,8 @@
       "says": "The Mac app updates itself with Sparkle; Check for Updates… is in the menu and Settings › About.",
       "status": "stable@0.3.4",
       "platforms": ["mac"],
-      "note": "On Windows and Linux, Check for Updates… opens the releases page.",
-      "docs": ["docs/release.md"]
+      "note": "On Windows and Linux, Check for Updates… opens the releases page. This fork leaves Sparkle out, so on a Mac it doesn't show.",
+      "docs": ["docs/release.md", "docs/macos-13.md"]
     },
     {
       "id": "windows-zip",
@@ -851,10 +851,11 @@
       "id": "macos",
       "group": "platforms",
       "name": "macOS",
-      "says": "Apple silicon, macOS 15 or later; live transcription and Liquid Glass need macOS 26.",
+      "says": "Apple silicon, macOS 13 or later; live transcription and Liquid Glass need macOS 26.",
       "status": "stable@0.3.4",
       "platforms": ["mac"],
-      "docs": ["README.md#install"]
+      "note": "This fork, built from source. Upstream's app needs macOS 15.",
+      "docs": ["docs/macos-13.md", "README.md#install"]
     },
     {
       "id": "windows",

@@ -32,7 +32,7 @@ For a page from elsewhere the port clue is worth `served::SERVER_ONLY` (15), so 
 When the captured app is software whose source Kit works on, that checkout is a clue (`Source::App` with a folder, 70 points, like a terminal's folder). `look::app_checkout` finds it:
 
 - `"routing": {"apps": {"<bundle ID or prefix>": "<folder>"}}` in config.json, for apps whose checkout is named otherwise (`"com.kitlangton.problems": "~/code/worktrees/team-board/rewrite"`). The longest matching prefix wins.
-- Otherwise the one open session repository (or folder, outside a repository) whose name is the app's name run together or one of its words or bundle ID parts, generic ones dropped: OpenCode Beta (`ai.opencode.desktop.beta`) → `…/opencode`, Scrawl Helper (`dev.kitlangton.scrawl.helper`) → `…/scrawl`, Hex → `…/hex`. Two checkouts named alike give nothing. Browsers, terminals, editors and system apps give nothing, OpenCode aside.
+- Otherwise the one open session repository (or folder, outside a repository) whose name is the app's name run together or one of its words or bundle ID parts, generic ones dropped: OpenCode Beta (`ai.opencode.desktop.beta`) → `…/opencode`, Scrawl Helper (`dev.kromann.scrawl.helper`) → `…/scrawl`, Hex → `…/hex`. Two checkouts named alike give nothing. Browsers, terminals, editors and system apps give nothing, OpenCode aside.
 
 There are no built-in paths: the defaults for OpenCode and Scrawl come from their checkouts being named `opencode` and `scrawl`, so they work on any Mac where a session is open in them.
 
