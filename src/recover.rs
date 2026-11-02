@@ -10,6 +10,11 @@
 //! rebuilt too, from the video and audio alone: the whole frame, no ink or clicks, keyframes from
 //! scene changes and the transcript. A live capture never looks like that: `audio.wav` is written
 //! only when the recording has stopped, just before `unfinished.json`.
+//!
+//! On macOS a capture that dies while recording leaves `recording.mp4`, which plays up to its last
+//! fragment (`capture/sck_compat/movie.rs`), and `.recording`, naming the process that was writing
+//! it. Once that process is gone the movie is rebuilt the same way, with no transcript: the audio
+//! was still in memory.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -25,6 +30,8 @@ use crate::windows::{CursorSample, WindowSnapshot};
 
 pub const UNFINISHED: &str = "unfinished.json";
 pub const RECOVERING: &str = ".recovering";
+/// Beside a movie while it's being recorded: the recording process's id.
+pub const RECORDING: &str = ".recording";
 
 /// A journal younger than this may belong to a build still running in another process.
 const SETTLE: Duration = Duration::from_secs(15);
@@ -69,6 +76,7 @@ pub fn write(bundle_dir: &Path, unfinished: &Unfinished) {
 pub fn finished(bundle_dir: &Path) {
     let _ = std::fs::remove_file(bundle_dir.join(UNFINISHED));
     let _ = std::fs::remove_file(bundle_dir.join(RECOVERING));
+    let _ = std::fs::remove_file(bundle_dir.join(RECORDING));
 }
 
 pub fn read(bundle_dir: &Path) -> Result<Unfinished> {
@@ -88,11 +96,33 @@ fn orphaned(dir: &Path) -> bool {
         && !dir.join("timeline.json").exists()
 }
 
+#[cfg(target_os = "macos")]
+fn is_running(pid: i32) -> bool {
+    let alive = unsafe { libc::kill(pid, 0) } == 0;
+    alive || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn is_running(_pid: i32) -> bool {
+    true
+}
+
+/// A movie whose recording process is gone. A live capture's process is running, however still
+/// its screen, so no waiting is needed here.
+fn died_recording(dir: &Path) -> bool {
+    dir.join(VIDEO).is_file()
+        && !dir.join(UNFINISHED).exists()
+        && std::fs::read_to_string(dir.join(RECORDING))
+            .ok()
+            .and_then(|pid| pid.trim().parse().ok())
+            .is_some_and(|pid| !is_running(pid))
+}
+
 /// Whether a build is still owed to `dir`: nothing built it and it hasn't been tried.
 pub fn owed(dir: &Path) -> bool {
     !dir.join("scrawl.json").exists()
         && !dir.join(RECOVERING).exists()
-        && (dir.join(UNFINISHED).is_file() || orphaned(dir))
+        && (dir.join(UNFINISHED).is_file() || orphaned(dir) || died_recording(dir))
 }
 
 fn untouched_for(path: &Path, now: SystemTime, age: Duration) -> bool {
@@ -111,7 +141,9 @@ pub fn pending(captures: &Path, now: SystemTime) -> Vec<PathBuf> {
         .filter(|dir| {
             dir.extension().is_some_and(|ext| ext == "scrawl")
                 && owed(dir)
-                && if orphaned(dir) {
+                && if died_recording(dir) {
+                    true
+                } else if orphaned(dir) {
                     [dir.clone(), dir.join(VIDEO), dir.join(AUDIO)]
                         .iter()
                         .all(|path| untouched_for(path, now, ORPHAN_SETTLE))
@@ -186,7 +218,7 @@ pub fn rebuild(dir: &Path, media: &Media) -> Result<String> {
     let result = if dir.join(UNFINISHED).is_file() {
         read(dir)
             .and_then(|unfinished| crate::rebuild_screen_bundle_with(dir, unfinished, None, media))
-    } else if orphaned(dir) {
+    } else if orphaned(dir) || died_recording(dir) {
         let probe = (media.probe)(&dir.join(VIDEO));
         let audio_ms = std::fs::read(dir.join(AUDIO))
             .ok()
@@ -449,6 +481,31 @@ mod tests {
         let later = now + ORPHAN_SETTLE + Duration::from_secs(1);
         assert_eq!(pending(&captures, later), vec![lost.clone(), journaled]);
         assert!(owed(&lost) && !owed(&live) && !owed(&built) && !owed(&tried) && !owed(&phone));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn recover_picks_up_a_capture_whose_process_died_but_never_a_running_one() {
+        let captures = temp_dir("died");
+        let bundle = |name: &str, pid: u32| {
+            let dir = captures.join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(VIDEO), b"movie").unwrap();
+            std::fs::write(dir.join(RECORDING), pid.to_string()).unwrap();
+            dir
+        };
+        let mut gone = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+        let dead_pid = gone.id();
+        gone.wait().unwrap();
+        let died = bundle("a.scrawl", dead_pid);
+        let live = bundle("b.scrawl", std::process::id());
+        let built = bundle("c.scrawl", dead_pid);
+        std::fs::write(built.join("scrawl.json"), "{}").unwrap();
+
+        assert!(owed(&died) && !owed(&live) && !owed(&built));
+        assert_eq!(pending(&captures, SystemTime::now()), vec![died.clone()]);
+        finished(&died);
+        assert!(!died.join(RECORDING).exists());
     }
 
     #[test]
