@@ -1363,7 +1363,7 @@ final class SettingsWindow: NSObject, NSApplicationDelegate, NSWindowDelegate {
     window.delegate = self
     let host = FirstClickHostingView(rootView: SettingsView(model: model))
     // The panes draw under the title bar themselves (the sidebar holds the traffic lights).
-    host.safeAreaRegions = []
+    if #available(macOS 13.3, *) { host.safeAreaRegions = [] }
     host.sizingOptions = []
     window.contentView = host
     // With a toolbar, the content size leaves out the title bar; the window is exactly the panes.

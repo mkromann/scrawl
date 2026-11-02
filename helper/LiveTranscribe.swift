@@ -11,13 +11,13 @@ import Speech
 /// Before macOS 26 there is no SpeechAnalyzer to stream to, so it fails at once the same way.
 enum LiveTranscriber {
   static func run(preferred: String? = nil) async throws {
-    #if compiler(>=6.2)
+    #if SCRAWL_SDK_26
     if #available(macOS 26, *) { return try await stream(preferred: preferred) }
     #endif
     throw HelperError("live transcription needs macOS 26's SpeechAnalyzer")
   }
 
-  #if compiler(>=6.2)
+  #if SCRAWL_SDK_26
   @available(macOS 26, *)
   private static func stream(preferred: String?) async throws {
     guard let choice = await SpeechModel.choose(preferred: preferred), choice.engine == .speech else {
@@ -71,7 +71,7 @@ enum LiveTranscriber {
   #endif
 }
 
-#if compiler(>=6.2)
+#if SCRAWL_SDK_26
 /// Turns stdin into analyzer buffers, about 100 ms at a time.
 @available(macOS 26, *)
 private final class StdinPCM: @unchecked Sendable {

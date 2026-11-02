@@ -386,7 +386,7 @@ extension PermissionPanel {
         ZStack(alignment: .leading) {
           dragText.opacity(model.phase == .granted ? 0 : 1)
             .blur(radius: model.phase == .granted ? 3 : 0)
-          (Text(appName).foregroundStyle(.primary).fontWeight(.medium) + Text(" is allowed").foregroundStyle(.secondary))
+          (Text(appName).foregroundColor(.primary).fontWeight(.medium) + Text(" is allowed").foregroundColor(.secondary))
             .opacity(model.phase == .granted ? 1 : 0)
             .blur(radius: model.phase == .granted ? 0 : 3)
         }
@@ -398,10 +398,10 @@ extension PermissionPanel {
     }
 
     private var dragText: Text {
-      Text("Drag ").foregroundStyle(.secondary)
-        + Text(appName).foregroundStyle(.primary).fontWeight(.medium)
-        + Text(" to the list above to allow ").foregroundStyle(.secondary)
-        + Text(kind.title).foregroundStyle(.primary).fontWeight(.medium)
+      Text("Drag ").foregroundColor(.secondary)
+        + Text(appName).foregroundColor(.primary).fontWeight(.medium)
+        + Text(" to the list above to allow ").foregroundColor(.secondary)
+        + Text(kind.title).foregroundColor(.primary).fontWeight(.medium)
     }
 
     private var appRow: some View {
@@ -590,7 +590,7 @@ extension PermissionPanel {
 
     /// Liquid Glass on macOS 26 (when built with its SDK); a frosted popover material before that.
     static func makeGlass() -> NSView {
-      #if compiler(>=6.2)
+      #if SCRAWL_SDK_26
       if #available(macOS 26, *) {
         let glass = NSGlassEffectView()
         glass.style = .regular
@@ -608,7 +608,7 @@ extension PermissionPanel {
     }
 
     static func setCornerRadius(_ radius: CGFloat, of glass: NSView) {
-      #if compiler(>=6.2)
+      #if SCRAWL_SDK_26
       if #available(macOS 26, *), let glass = glass as? NSGlassEffectView {
         glass.cornerRadius = radius
         return

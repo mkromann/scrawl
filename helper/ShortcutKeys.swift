@@ -387,7 +387,7 @@ final class KeyController {
 let keyInk = Color(red: 1, green: 0x3B / 255, blue: 0x30 / 255)
 
 private func mix(_ a: Color, _ b: Color, _ t: Double) -> Color {
-  guard let a = NSColor(a).usingColorSpace(.sRGB), let b = NSColor(b).usingColorSpace(.sRGB) else { return Color(a) }
+  guard let a = NSColor(a).usingColorSpace(.sRGB), let b = NSColor(b).usingColorSpace(.sRGB) else { return a }
   let t = max(0, min(1, t))
   return Color(
     .sRGB,

@@ -21,7 +21,7 @@ struct SpeechChoice {
     }
   }
 
-  #if compiler(>=6.2)
+  #if SCRAWL_SDK_26
   @available(macOS 26, *)
   func module() -> any SpeechModule {
     engine == .dictation
@@ -39,20 +39,20 @@ struct SpeechChoice {
 enum SpeechModel {
   /// SpeechAnalyzer (macOS 26, built with its SDK); otherwise `Recognizer`.
   static var analyzer: Bool {
-    #if compiler(>=6.2)
+    #if SCRAWL_SDK_26
     if #available(macOS 26, *) { return true }
     #endif
     return false
   }
 
   static func choose(preferred: String? = nil) async -> SpeechChoice? {
-    #if compiler(>=6.2)
+    #if SCRAWL_SDK_26
     if #available(macOS 26, *) { return await analyzerChoice(preferred: preferred) }
     #endif
     return Recognizer.choice(preferred: preferred)
   }
 
-  #if compiler(>=6.2)
+  #if SCRAWL_SDK_26
   @available(macOS 26, *)
   private static func analyzerChoice(preferred: String?) async -> SpeechChoice? {
     if SpeechTranscriber.isAvailable {
@@ -92,7 +92,7 @@ enum SpeechModel {
   /// there's nothing to download: `installed`, `permission` (Speech Recognition is off) or
   /// `failed` (no Dictation model), with `error` saying what to turn on.
   static func status(_ choice: SpeechChoice) async -> (status: String, error: String?) {
-    #if compiler(>=6.2)
+    #if SCRAWL_SDK_26
     if #available(macOS 26, *) {
       switch await AssetInventory.status(forModules: [choice.module()]) {
       case .installed: return ("installed", nil)
@@ -110,7 +110,7 @@ enum SpeechModel {
 
   /// Every locale the engine knows, for Settings' language menu.
   static func supportedLocales() async -> [String] {
-    #if compiler(>=6.2)
+    #if SCRAWL_SDK_26
     if #available(macOS 26, *) {
       let supported = SpeechTranscriber.isAvailable
         ? await SpeechTranscriber.supportedLocales : await DictationTranscriber.supportedLocales
@@ -154,7 +154,7 @@ enum SpeechModel {
   }
 
   static func install(_ choice: SpeechChoice, progress: @escaping @Sendable (Double) -> Void) async throws {
-    #if compiler(>=6.2)
+    #if SCRAWL_SDK_26
     if #available(macOS 26, *) {
       // Each language reserves a slot; Scrawl uses one language at a time.
       let reserved = await AssetInventory.reservedLocales
@@ -320,13 +320,13 @@ enum Transcriber {
     guard let choice = await SpeechModel.choose(preferred: preferred) else {
       return missing(nil, "unsupported")
     }
-    #if compiler(>=6.2)
+    #if SCRAWL_SDK_26
     if #available(macOS 26, *) { return try await analyzerTranscribe(url, choice: choice) }
     #endif
     return try await Recognizer.transcribe(url, choice: choice)
   }
 
-  #if compiler(>=6.2)
+  #if SCRAWL_SDK_26
   @available(macOS 26, *)
   private static func analyzerTranscribe(_ url: URL, choice: SpeechChoice) async throws -> [String: Any] {
     switch await SpeechModel.status(choice).status {
