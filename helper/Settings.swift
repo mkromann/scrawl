@@ -1128,19 +1128,18 @@ struct SettingsView: View {
             Text("Version \(state.version)").font(.system(size: 12).monospacedDigit()).foregroundStyle(theme.secondary)
           }
           Spacer()
-          SettingsButton(title: "Check for Updates…", enabled: state.updates) { model.act("check-for-updates") }
+          if state.updates {
+            SettingsButton(title: "Check for Updates…") { model.act("check-for-updates") }
+          }
         }
         .padding(.horizontal, 12)
         .frame(height: 64)
-      }
-      if !state.updates {
-        SettingsCaption(text: "Updates work in the installed Scrawl.app.")
       }
       SettingsHeader("Links")
       SettingsGroup {
         link("Website", "scrawl.kitlangton.com", "https://scrawl.kitlangton.com")
         SettingsSeparator()
-        link("Source", "github.com/kitlangton/scrawl", "https://github.com/kitlangton/scrawl")
+        link("Source", "github.com/mkromann/scrawl", "https://github.com/mkromann/scrawl")
         SettingsSeparator()
         SettingsRow(title: "Welcome tour") {
           SettingsButton(title: "Show") { model.act("tour") }

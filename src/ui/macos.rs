@@ -462,6 +462,9 @@ objc2::define_class!(
             if let Some(item) = menu.itemWithTag(EXPORT_VIDEO_MENU_TAG) {
                 item.setHidden(!crate::handoff::video_export());
             }
+            if let Some(item) = menu.itemWithTag(UPDATES_MENU_TAG) {
+                item.setHidden(!crate::sparkle::available());
+            }
         }
     }
 );
@@ -470,6 +473,8 @@ objc2::define_class!(
 const INBOX_MENU_TAG: isize = 0x5c4a;
 /// Tag on **Export Last Capture as Video…**, shown only with `"videoExport": true`.
 const EXPORT_VIDEO_MENU_TAG: isize = 0x5c4e;
+/// Tag on **Check for Updates…**, shown only where Sparkle started.
+const UPDATES_MENU_TAG: isize = 0x5c4f;
 /// Tag on **Record Screen**, whose title carries the record shortcut.
 const RECORD_MENU_TAG: isize = 0x5c4d;
 
@@ -637,6 +642,10 @@ pub(super) fn install_status_bar() -> Option<flume::Receiver<MenuAction>> {
         item.setKeyEquivalent(&NSString::from_str(","));
     }
     add("Check for Updates…", sel!(checkForUpdates:));
+    if let Some(item) = menu.itemAtIndex(menu.numberOfItems() - 1) {
+        item.setTag(UPDATES_MENU_TAG);
+        item.setHidden(!crate::sparkle::available());
+    }
     add("Quit Scrawl", sel!(quitApp:));
     if let Some(item) = menu.itemAtIndex(menu.numberOfItems() - 1) {
         item.setKeyEquivalent(&NSString::from_str("q"));

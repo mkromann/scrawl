@@ -2608,6 +2608,12 @@ mod tests {
     }
 
     #[test]
+    fn check_for_updates_needs_sparkle_on_a_mac() {
+        // A test has no Contents/Frameworks, and neither does this fork's Scrawl.app.
+        assert_eq!(updates_available(), WIN);
+    }
+
+    #[test]
     fn helper_lines_parse_into_actions() {
         let parse = |line: &str| serde_json::from_str::<Action>(line).unwrap();
         assert_eq!(

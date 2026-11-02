@@ -1652,8 +1652,8 @@ impl SettingsWindow {
                 link(
                     "settings-source",
                     "Source",
-                    "github.com/kitlangton/scrawl",
-                    "https://github.com/kitlangton/scrawl",
+                    "github.com/mkromann/scrawl",
+                    "https://github.com/mkromann/scrawl",
                 )
                 .into_any_element(),
                 row(
