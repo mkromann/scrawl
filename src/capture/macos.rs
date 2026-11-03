@@ -1129,11 +1129,13 @@ pub(super) fn run_sampler(sampler: Sampler) -> Option<PathBuf> {
     if let Some(ref output) = recording_output {
         output.stop_taking_frames();
     }
-    if let Some(candidates) = candidates {
-        candidates.stop();
-    }
+    // The two streams stop side by side: Esc and a chip switch wait for this on the UI thread.
+    let candidates = candidates.map(|candidates| thread::spawn(move || candidates.stop()));
     if let Some(stream) = stream {
         stop_stream(&stream);
+    }
+    if let Some(candidates) = candidates {
+        let _ = candidates.join();
     }
     // A movie that didn't close isn't one: the candidates stand in for it.
     video_path.filter(|_| recording_output.is_some_and(|output| output.finish()))
