@@ -96,26 +96,54 @@ fn orphaned(dir: &Path) -> bool {
         && !dir.join("timeline.json").exists()
 }
 
+/// Whether `pid` is a process that was running at `marked`. One that started later only reuses
+/// the id (after a reboot, or a long uptime).
 #[cfg(target_os = "macos")]
-fn is_running(pid: i32) -> bool {
+fn is_running(pid: i32, marked: Option<SystemTime>) -> bool {
     let alive = unsafe { libc::kill(pid, 0) } == 0;
-    alive || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    if !alive {
+        return std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM);
+    }
+    let started = process_start(pid);
+    !matches!((started, marked), (Some(started), Some(marked)) if started > marked)
+}
+
+#[cfg(target_os = "macos")]
+fn process_start(pid: i32) -> Option<SystemTime> {
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as i32;
+    let read = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            (&raw mut info).cast(),
+            size,
+        )
+    };
+    (read == size).then(|| {
+        SystemTime::UNIX_EPOCH
+            + Duration::from_secs(info.pbi_start_tvsec)
+            + Duration::from_micros(info.pbi_start_tvusec)
+    })
 }
 
 #[cfg(not(target_os = "macos"))]
-fn is_running(_pid: i32) -> bool {
+fn is_running(_pid: i32, _marked: Option<SystemTime>) -> bool {
     true
 }
 
 /// A movie whose recording process is gone. A live capture's process is running, however still
 /// its screen, so no waiting is needed here.
 fn died_recording(dir: &Path) -> bool {
+    let marker = dir.join(RECORDING);
+    let marked = std::fs::metadata(&marker).and_then(|m| m.modified()).ok();
     dir.join(VIDEO).is_file()
         && !dir.join(UNFINISHED).exists()
-        && std::fs::read_to_string(dir.join(RECORDING))
+        && std::fs::read_to_string(&marker)
             .ok()
             .and_then(|pid| pid.trim().parse().ok())
-            .is_some_and(|pid| !is_running(pid))
+            .is_some_and(|pid| !is_running(pid, marked))
 }
 
 /// Whether a build is still owed to `dir`: nothing built it and it hasn't been tried.
@@ -501,9 +529,20 @@ mod tests {
         let live = bundle("b.scrawl", std::process::id());
         let built = bundle("c.scrawl", dead_pid);
         std::fs::write(built.join("scrawl.json"), "{}").unwrap();
+        // Marked a day before this process started: the id is another process's now.
+        let reused = bundle("d.scrawl", std::process::id());
+        std::fs::File::options()
+            .write(true)
+            .open(reused.join(RECORDING))
+            .unwrap()
+            .set_modified(SystemTime::now() - Duration::from_secs(86_400))
+            .unwrap();
 
-        assert!(owed(&died) && !owed(&live) && !owed(&built));
-        assert_eq!(pending(&captures, SystemTime::now()), vec![died.clone()]);
+        assert!(owed(&died) && !owed(&live) && !owed(&built) && owed(&reused));
+        assert_eq!(
+            pending(&captures, SystemTime::now()),
+            vec![died.clone(), reused]
+        );
         finished(&died);
         assert!(!died.join(RECORDING).exists());
     }
