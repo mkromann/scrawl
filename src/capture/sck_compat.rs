@@ -214,11 +214,13 @@ pub struct CandidateStream {
 }
 
 impl CandidateStream {
-    /// Starts sending frames at `rate` per second; returns once the first one is in.
+    /// Starts sending frames at `rate` per second; returns once the first one is in, or, unless
+    /// `need_first`, once `FIRST_FRAME_TIMEOUT` has passed without one.
     fn with_rate(
         filter: &SCContentFilter,
         config: &SCStreamConfiguration,
         rate: u32,
+        need_first: bool,
     ) -> Result<Self, CaptureFailed> {
         let latest = Arc::new(Latest::default());
         let config = stream_config(config).with_fps(rate).with_queue_depth(3);
@@ -243,6 +245,10 @@ impl CandidateStream {
             .is_some();
         if first {
             Ok(candidates)
+        } else if !need_first {
+            // A covered or minimized window sends nothing yet; its frames come once it shows.
+            scrawl_log("Candidate stream: no first frame yet; keeping it running");
+            Ok(candidates)
         } else {
             candidates.stop();
             Err(CaptureFailed("no frame from ScreenCaptureKit".to_string()))
@@ -253,7 +259,7 @@ impl CandidateStream {
         filter: &SCContentFilter,
         config: &SCStreamConfiguration,
     ) -> Result<Self, CaptureFailed> {
-        Self::with_rate(filter, config, CANDIDATE_RATE)
+        Self::with_rate(filter, config, CANDIDATE_RATE, false)
     }
 
     /// Hides or shows windows from now on. The next frame read comes from after the change.
@@ -326,7 +332,7 @@ impl SCScreenshotManager {
         filter: &SCContentFilter,
         config: &SCStreamConfiguration,
     ) -> Result<Screenshot, CaptureFailed> {
-        let stream = CandidateStream::with_rate(filter, config, FRAME_RATE)?;
+        let stream = CandidateStream::with_rate(filter, config, FRAME_RATE, true)?;
         let frame = stream.frame(0, false);
         stream.stop();
         let frame = frame.ok_or_else(|| CaptureFailed("the frame had no pixels".to_string()))?;
