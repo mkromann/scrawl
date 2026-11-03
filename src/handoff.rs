@@ -1584,6 +1584,7 @@ pub fn extract_frames_range(
             .join("zoom")
             .join(format!("range-{from_ms}-{to_ms}"));
         if let Some(ffmpeg) = on_path("ffmpeg") {
+            let (seek_ms, span_ms) = movie_window(from_ms, to_ms, offset_ms);
             fs::create_dir_all(&output_dir)?;
             // Only remove our generated files, so repeating at a lower FPS cannot
             // return leftover frames from a previous extraction.
@@ -1602,12 +1603,12 @@ pub fn extract_frames_range(
                     "-y",
                     "-ss",
                 ])
-                .arg(format!("{:.3}", from_ms as f64 / 1_000.0))
+                .arg(format!("{:.3}", seek_ms as f64 / 1_000.0))
                 .args(["-threads", "1", "-filter_threads", "1"])
                 .arg("-i")
                 .arg(&video)
                 .arg("-t")
-                .arg(format!("{:.3}", (to_ms - from_ms) as f64 / 1_000.0))
+                .arg(format!("{:.3}", span_ms as f64 / 1_000.0))
                 .arg("-vf")
                 .arg(format!("fps={fps}"))
                 .args(["-threads", "1"])
@@ -1653,6 +1654,14 @@ pub fn extract_frames_range(
         }
     }
     existing_keyframes(&directory, from_ms, to_ms, fps)
+}
+
+/// Where to seek in a movie whose clock starts `offset_ms` into the bundle's, and for how long,
+/// for the bundle times `from_ms..to_ms`. A range that starts before the movie is cut to it.
+fn movie_window(from_ms: u64, to_ms: u64, offset_ms: u64) -> (u64, u64) {
+    let seek_ms = from_ms.saturating_sub(offset_ms);
+    let end_ms = to_ms.saturating_sub(offset_ms).max(seek_ms + 1);
+    (seek_ms, end_ms - seek_ms)
 }
 
 fn generated_frame(path: &Path) -> bool {
@@ -1797,6 +1806,14 @@ mod tests {
         assert_eq!(bundle.created_at_ms, 123);
         fs::write(path.join("scrawl.json"), b"not json").unwrap();
         assert!(load_bundle(&path).is_err());
+    }
+
+    #[test]
+    fn frame_ranges_seek_on_the_movie_clock() {
+        assert_eq!(movie_window(2_400, 2_700, 0), (2_400, 300));
+        assert_eq!(movie_window(2_400, 2_700, 500), (1_900, 300));
+        assert_eq!(movie_window(200, 900, 500), (0, 400));
+        assert_eq!(movie_window(100, 300, 500), (0, 1));
     }
 
     #[test]
