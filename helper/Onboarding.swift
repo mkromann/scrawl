@@ -428,13 +428,16 @@ struct PermissionInfo {
 /// What System Settings calls the Accessibility list. macOS 27 renamed it.
 let accessibilityName = ProcessInfo.processInfo.isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion: 27, minorVersion: 0, patchVersion: 0))
   ? "Device Control and Data Access" : "Accessibility"
+/// macOS 15 renamed Screen Recording, and added the private window picker prompt.
+let isSequoiaOrLater = ProcessInfo.processInfo.isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion: 15, minorVersion: 0, patchVersion: 0))
+let screenRecordingName = isSequoiaOrLater ? "Screen & System Audio Recording" : "Screen Recording"
 /// `accessibility` is a macOS 14 symbol, and a missing symbol draws nothing.
 let accessibilitySymbol = NSImage(systemSymbolName: "accessibility", accessibilityDescription: nil) == nil ? "figure.arms.open" : "accessibility"
 
 func permissionInfo(_ permission: String, paste: String) -> PermissionInfo {
   switch permission {
   case "screen-recording":
-    return PermissionInfo(symbol: "rectangle.dashed.badge.record", name: "Screen & System Audio Recording", why: "See your screen while you record")
+    return PermissionInfo(symbol: "rectangle.dashed.badge.record", name: screenRecordingName, why: "See your screen while you record")
   case "microphone":
     return PermissionInfo(symbol: "mic", name: "Microphone", why: "Hear what you say while you record")
   case "accessibility":
@@ -601,7 +604,7 @@ struct OnboardingView: View {
         .fixedSize(horizontal: false, vertical: true)
         .padding(.top, 10)
       if state.step == "try-it" {
-        if state.pickerNote {
+        if state.pickerNote && isSequoiaOrLater {
           note(pickerNoteText).padding(.top, 12)
         }
         if state.speech?.notReady == true, let line = state.speech?.line {
@@ -685,7 +688,7 @@ struct OnboardingView: View {
         }
       }
       .padding(.top, 22)
-      if state.pickerNote {
+      if state.pickerNote && isSequoiaOrLater {
         note(pickerNoteText)
           .padding(.top, 14)
       }
