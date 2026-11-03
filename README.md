@@ -8,6 +8,9 @@ Press a shortcut (`⌥⇧S`) and Scrawl starts recording the screen. Talk, click
 
 ## Install
 
+On macOS 13, build this fork from source ([docs/macos-13.md](docs/macos-13.md)): the downloads below
+are upstream's and need macOS 15.
+
 Scrawl needs an Apple silicon Mac on macOS 15 or later (live transcription and Liquid Glass need
 macOS 26). Download the DMG from [scrawl.kitlangton.com](https://scrawl.kitlangton.com), or use
 Homebrew:
